@@ -95,20 +95,15 @@ introspection/introspection/introspect-testSet-yearMonthDuration-91	schema not l
 NIST2004-01-14/list-double-minLength-2/NISTXML-SV-IV-list-double-minLength-3-2	valid instance refused: value 97457741532772222E218 68285875186224842E273 71623222257..." has list item that is
 suntest/identitytestsuitetest003/test.1.v	valid instance refused: field @id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id of key selects values on tn:key (at
 suntest/identitytestsuitetest003/test.2.v	valid instance refused: field @id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id|@id of key selects values on tn:key (at
-ElemDecl/targetns00101m/targetNS00101m1_p	valid instance refused: the root element {ElemDecl/targetNSa}number is not a global element
-SType/st_targetns00101m/ST_targetNS00101m2_p	valid instance refused: xsi:type names {ST_targetNSa}Test, which the schema does not define
 MS-Additional2006-07-15/addB149/addB149.i	invalid instance accepted
 MS-Additional2006-07-15/addB193/addB193	schema refused: global xs:element needs a name
 MS-Additional2006-07-15/isDefault079/isDefault079.v	valid instance refused: value differs from the fixed value
-MS-AttributeGroup2006-07-15/attgD034/attgD034.v	valid instance refused: attribute foo:att matches a strict attribute wildcard but is
 MS-Attribute2006-07-15/attP031/attP031.i	valid instance refused: attribute x:att is not allowed on x:elem
 MS-Attribute2006-07-15/attZ015/attZ015.v	valid instance refused: attribute a is not allowed on doc
-MS-ComplexType2006-07-15/ctL021/ctL021.v	valid instance refused: attribute myNS:testAttr matches a strict attribute wildcard but is
 MS-DataTypes2006-07-15/QName007_2090/QName007_2090.i	invalid instance accepted
 MS-Element2006-07-15/QFE1700c2/QFE1700c2.v	valid instance refused: value is not an integer
 MS-IdentityConstraint2006-07-15/idL100/idL100.v	invalid instance accepted
 MS-IdentityConstraint2006-07-15/idZ015/idZ015.i	invalid instance accepted
-MS-Particles2006-07-15/particlesB013/particlesB013.v	valid instance refused: element b matches a strict wildcard but is not
 MS-Particles2006-07-15/particlesEb041/particlesEb041	schema refused: type {foo}foo is derived from itself
 MS-Particles2006-07-15/particlesEb041/particlesEb041.v	schema not loaded
 MS-Particles2006-07-15/particlesHa161/particlesHa161	invalid schema accepted
@@ -116,7 +111,6 @@ MS-Particles2006-07-15/particlesK006/particlesK006	invalid schema accepted
 MS-Particles2006-07-15/particlesZ001/particlesZ001.i	invalid instance accepted
 MS-Particles2006-07-15/particlesZ031/particlesZ031	schema refused: complex content derived from Type1, which has simple content
 MS-Particles2006-07-15/particlesZ036_b1/particlesZ036_b1.i	valid instance refused: doc: checking child elements against its content model would
-MS-Schema2006-07-15/schA1/schA1.v	valid instance refused: element b:e1 matches a strict wildcard but is not
 MS-Schema2006-07-15/schT2/schT2	invalid schema accepted
 MS-Schema2006-07-15/schU3/schU3.i	schema not loaded
 MS-Schema2006-07-15/schU4/schU4.i	schema not loaded

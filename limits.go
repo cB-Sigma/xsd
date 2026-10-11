@@ -31,6 +31,17 @@ type Limits struct {
 	// MaxBytes is the largest document, in bytes, ValidateLimits accepts
 	// (ValidateTree, given a tree, ignores it). Default: none.
 	MaxBytes int
+	// MaxEntityBytes bounds the text that entity references add to a
+	// document read with DocOptions.Entities. Default
+	// DefaultMaxEntityBytes.
+	MaxEntityBytes int
+}
+
+func (l Limits) entityBytes() int {
+	if l.MaxEntityBytes == 0 {
+		return DefaultMaxEntityBytes
+	}
+	return l.MaxEntityBytes
 }
 
 func (l Limits) withDefaults() Limits {
@@ -68,6 +79,11 @@ type DocOptions struct {
 	// wants the declaration first, but some senders write a line break
 	// before it.
 	StrictProlog bool
+	// Entities expands the internal general entities a document's DTD
+	// declares, within Limits.MaxEntityBytes (see dtd.go for what is and
+	// is not read). Without it a reference to a declared entity makes the
+	// document not well-formed.
+	Entities bool
 }
 
 // ValidateDoc checks doc against the schema. It returns the warnings
@@ -77,7 +93,7 @@ func (s *Schema) ValidateDoc(doc []byte, opt DocOptions) (Errors, error) {
 	if s == nil {
 		return nil, errNoSchema
 	}
-	root, warn, err := parseDoc(doc, opt.Limits, opt.StrictProlog)
+	root, warn, err := parseDoc(doc, opt.Limits, opt.StrictProlog, opt.Entities)
 	if err != nil {
 		if le, ok := err.(*limitError); ok {
 			return nil, &Errors{{Line: le.line, Msg: "document refused: " + le.msg, Kind: IssueLimit}}

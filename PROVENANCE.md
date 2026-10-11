@@ -45,6 +45,8 @@ the recommendations' text, not another implementation.
 | Restriction of complex types (restrict.go) | XSD 1.0 Part 1, Derivation Valid (Restriction, Complex) and Particle Valid (Restriction) with its cases; Wildcard Subset, Union and Intersection as amended by erratum E1-10 |
 | Redefinition (redefine.go) | XSD 1.0 Part 1, 4.2.2 |
 | Documents by URL (fetch.go) | Our own design; RFC 3986 reference resolution through net/url |
+| Schema location hints (hints.go) | XSD 1.0 Part 1, 4.3.2 (how a processor may locate schema documents, and the rule on late hints); the API is our own design |
+| DTD entities (dtd.go) | XML 1.0 Fifth Edition, 4.2 to 4.5 (entity declarations, replacement text, character references); the expansion budget is our own design, against the "billion laughs" pattern |
 | XML names (simple.go, regexclass.go) | XML 1.0 fifth edition, NameStartChar and NameChar, as facts |
 
 ## Test data

@@ -349,10 +349,7 @@ func runGroup(fsys fs.FS, base, setName string, g *testGroup, r *row) []outcome 
 	for i := range g.Instances {
 		c := &g.Instances[i]
 		id := setName + "/" + g.Name + "/" + c.Name
-		if !applies(c.Version) || !runnable(c) || g.Schema == nil {
-			// Without a schema test the instance names its schema
-			// through xsi:schemaLocation, which this module does not
-			// follow.
+		if !applies(c.Version) || !runnable(c) {
 			r.skipped++
 			continue
 		}
@@ -362,17 +359,50 @@ func runGroup(fsys fs.FS, base, setName string, g *testGroup, r *row) []outcome 
 			r.skipped++
 			continue
 		}
+		docPath := path.Join(base, docs[0])
+		raw, rerr := fs.ReadFile(fsys, docPath)
+		// An instance whose document has schema location hints is
+		// validated against the group's schema together with the
+		// documents the hints name (xsd.LoadHinted); without a schema
+		// test, the hints alone name its schema.
+		useSchema, useErr := schema, loadErr
+		hinted := false
+		if rerr == nil {
+			hs, err := xsd.Hints(raw)
+			switch {
+			case err != nil && strings.Contains(err.Error(), "schema location"):
+				hinted = true
+				useSchema, useErr = nil, err
+			case err == nil && len(hs) > 0:
+				hinted = true
+				useSchema, useErr = loadHinted(fsys, raw, docPath, schemaDocs)
+			}
+		}
+		if g.Schema == nil && !hinted {
+			r.skipped++
+			continue
+		}
 		var ok bool
 		var reason string
-		if loadErr != nil {
+		if useErr != nil && hinted && loadErr == nil {
+			// the schema the hints name cannot be assembled: the
+			// document is not valid (some tests are about exactly that)
+			ok = exp == "invalid"
+			if !ok {
+				reason = "schema not loaded from hints: " + short(useErr.Error())
+			}
+		} else if useErr != nil {
 			ok = false
 			reason = "schema not loaded"
+			if g.Schema == nil || loadErr == nil {
+				reason = "schema not loaded from hints: " + short(useErr.Error())
+			}
 		} else {
-			doc, err := fs.ReadFile(fsys, path.Join(base, docs[0]))
+			doc, err := raw, rerr
 			if err != nil {
 				ok, reason = false, "instance not readable"
 			} else {
-				verr := validate(schema, doc)
+				verr := validate(useSchema, doc)
 				ok = (verr == nil) == (exp == "valid")
 				if !ok {
 					if verr != nil {
@@ -420,6 +450,21 @@ func load(fsys fs.FS, docs []string) (s *xsd.Schema, err error) {
 		}
 	}
 	return xsd.LoadWith(fsys, opt, docs...)
+}
+
+func loadHinted(fsys fs.FS, doc []byte, docPath string, roots []string) (s *xsd.Schema, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			s, err = nil, fmt.Errorf("PANIC: %v", p)
+		}
+	}()
+	opt := xsd.HintOptions{DocPath: docPath}
+	if dir := os.Getenv("XSTS_FETCH_DIR"); dir != "" {
+		opt.Fetch = func(u string) ([]byte, error) {
+			return os.ReadFile(filepath.Join(dir, path.Base(u)))
+		}
+	}
+	return xsd.LoadHinted(fsys, opt, doc, roots...)
 }
 
 func validate(s *xsd.Schema, doc []byte) (err error) {

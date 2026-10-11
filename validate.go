@@ -178,8 +178,9 @@ func (r *run) typed(n *node, t *xtype, decl *elemDecl) {
 			// on an element that is not nillable xsi:nil may not appear,
 			// even as false
 			r.fail(n, "xsi:nil is set but %s is not nillable", n.display())
-		case b && decl == nil:
-			r.fail(n, "xsi:nil is set but %s is not nillable", n.display())
+		case decl == nil:
+			// without a declaration (xsi:type alone) nothing makes xsi:nil
+			// an error, and nothing makes the element nil
 		case b:
 			nilled = true
 		}

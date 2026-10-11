@@ -88,6 +88,20 @@ func (l *loader) fetchable(c *node, from, target string) bool {
 	return true
 }
 
+// fetchWhy is the last load warning about a document that was not
+// fetched, or why it could not be.
+func fetchWhy(l *loader, u string) string {
+	if l.opt.Fetch == nil {
+		return "no LoadOptions.Fetch"
+	}
+	for i := len(l.s.warnings) - 1; i >= 0; i-- {
+		if strings.HasPrefix(l.s.warnings[i].Msg, u+":") {
+			return strings.TrimPrefix(l.s.warnings[i].Msg, u+": ")
+		}
+	}
+	return "unknown"
+}
+
 // read returns a schema document's bytes: fetched or from the file system.
 func (l *loader) read(p string) ([]byte, error) {
 	if b, ok := l.fetched[p]; ok {

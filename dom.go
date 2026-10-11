@@ -130,7 +130,7 @@ func (n *node) resolveQName(v string) (qname, error) {
 // us, which also keeps each element's bindings for QName values). XML
 // white space before the XML declaration is accepted with a warning unless
 // strict.
-func parseDoc(b []byte, lim Limits, strict bool) (*node, []Issue, error) {
+func parseDoc(b []byte, lim Limits, strict, entities bool) (*node, []Issue, error) {
 	var warn []Issue
 	lim = lim.withDefaults()
 	if lim.MaxBytes > 0 && len(b) > lim.MaxBytes {
@@ -156,6 +156,16 @@ func parseDoc(b []byte, lim Limits, strict bool) (*node, []Issue, error) {
 			return nil, nil, err
 		}
 		switch t := tok.(type) {
+		case xml.Directive:
+			if entities && root == nil && bytes.HasPrefix(t, []byte("DOCTYPE")) {
+				if err := useEntities(d, t, b[d.InputOffset():], lim.entityBytes()); err != nil {
+					if le, ok := err.(*limitError); ok {
+						le.line = line
+						return nil, nil, le
+					}
+					return nil, nil, fmt.Errorf("line %d: %w", line, err)
+				}
+			}
 		case xml.ProcInst:
 			if strings.EqualFold(t.Target, "xml") {
 				switch {

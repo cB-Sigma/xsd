@@ -30,25 +30,26 @@ payloads and OpenADR 2.0 messages.
 | Bounded parsing (`Limits`: depth by default; elements, attributes, bytes on request) and a work bound on content-model checking | yes |
 | `ValidateTree`: validate a tree the caller parsed, with hooks for undeclared elements and attributes and extra value checks; graded issues (`IssueKind`) | yes |
 | XML 1.1 documents | read as XML 1.0 reads them (encoding/xml): the XML 1.1 name and control characters are not |
-| `xsi:schemaLocation` hints | no, by design: the receiver chooses the schema |
-| DTDs and entity declarations in documents | no: a document type declaration is skipped, entities other than the predefined ones are refused |
-| XSD 1.1 (assertions, open content, conditional types, `xs:override`, ...) | no: refused at load |
+| `xsi:schemaLocation` and `xsi:noNamespaceSchemaLocation` hints | opt-in: `LoadHinted` assembles a schema from a document's hints (and the caller's roots, which win); `Validate` never follows them |
+| Internal general entities declared in a document's DTD | opt-in: `DocOptions.Entities`, with the total expansion bounded (`Limits.MaxEntityBytes`); external and parameter entities, entities holding markup and the rest of the DTD are not read |
+| XSD 1.1 (assertions, open content, conditional types, `xs:override`, ...) | no: refused at load (see "Not yet") |
 
 ## Choosing a Go XML Schema validator
 
 Compared from each project's source at the versions named, in October
 2026. Check the projects themselves before relying on a row.
 
-| | this module | lestrrat-go/helium `xsd` v0.10.0 (v0.11.0 since) | lestrrat-go/libxml2 (master 3f0f7bd) | terminalstatic/go-xsd-validate v0.1.8 |
+| | this module v0.3.0 | lestrrat-go/helium `xsd` v0.10.0 (v0.11.0 since, still the newest on 2026-10-11) | lestrrat-go/libxml2 (master 3f0f7bd) | terminalstatic/go-xsd-validate v0.1.8 |
 |---|---|---|---|---|
 | Engine | own, Go standard library only | own, pure Go | libxml2 through cgo | libxml2 through cgo |
 | Builds with `CGO_ENABLED=0` | yes | yes | no | no |
 | Minimum Go | 1.24 | 1.26.1 | | |
-| W3C XSD 1.0 test suite | 99.6 % of all 39,336 XSD 1.0 tests (below) | 14,383 of the 14,399 tests it selects (its README) | libxml2's results | libxml2's results |
+| W3C XSD 1.0 test suite | 99.6 % of all 39,369 XSD 1.0 tests, 99.8 % with the two imported schemas supplied (below) | 14,383 of the 14,399 tests it selects (its README) | libxml2's results | libxml2's results |
 | Checks the schema's own correctness | yes | yes | yes | yes |
 | `xs:redefine` | yes | yes | yes | yes |
 | Hooks for vocabulary extension rules on a parsed tree | yes (`ValidateTree`) | no | no | no |
-| DTD entities in documents | no | yes, with an expansion cap | yes | yes |
+| DTD entities in documents | internal ones, opt-in, with an expansion cap | yes, with an expansion cap | yes | yes |
+| `xsi:schemaLocation` hints | opt-in (`LoadHinted`) | not compared | yes | yes |
 | Size of a minimal validating program (stripped, darwin/arm64; our measurement) | 3.0 MB (2.7 MB at v0.1.0) | 14.5 MB | not measured | not measured |
 
 The test-suite rows are not comparable as they stand: helium runs the
@@ -56,11 +57,31 @@ tests it selects, this module every test that applies to XSD 1.0.
 
 Pick this module when you want a small, cgo-free validator with no
 dependencies, especially when a vocabulary needs its own extension hooks
-(IEC 61850 SCL is one). Pick helium when you need DTD entities in
-documents and can use Go 1.26. Pick a libxml2 binding when cgo is fine
+(IEC 61850 SCL is one). Pick helium when you need external entities or
+the rest of the DTD (attribute defaults) and can use Go 1.26. Pick a libxml2 binding when cgo is fine
 and you want the reference behaviour most other tools share. None of
 these, nor this module, does XSD 1.1: for assertions and the rest of
 1.1, Xerces-J or Saxon-EE (Java) are the options.
+
+## Not yet
+
+- **XSD 1.1.** Assertions (`xs:assert`, `xs:assertion`) and conditional
+  type assignment need XPath 2.0: its typed data model, sequences,
+  comparisons and arithmetic over the XSD types, `if`, `for`, `some` and
+  `every`, and the function library. Nothing in Go stops a pure-Go
+  implementation of the subset assertions use: the types and their
+  comparisons are already here (simple.go). It is a large piece of work
+  (a parser, a typed evaluator and about a hundred functions), not done
+  in v0.3.0; until then a 1.1 schema is refused at load, not half
+  applied. Open content, `xs:override`, `notQName` and `notNamespace` and
+  the other 1.1 additions wait for the same release.
+- **Missing components** that no document uses: XSD 1.0 lets a schema
+  refer to a type or element that is never defined as long as nothing
+  needs it; this module refuses such a schema at load (12 XSTS tests).
+- **External entities and the rest of the DTD** (attribute defaults,
+  parameter entities): not read, on purpose; documents from peers should
+  not make the validator read files or the network.
+- **XML 1.1** name and control characters (encoding/xml reads XML 1.0).
 
 ## Install
 
@@ -92,7 +113,7 @@ API reference: https://pkg.go.dev/github.com/cB-Sigma/xsd
 
 | Package | What it does |
 |---|---|
-| `xsd` (module root) | `Load`, `LoadFiles`, `LoadWith` (`LoadOptions`: `Fetch`, `MaxFetches`), `LoadZip`; `Schema.Validate`, `ValidateDoc` (warnings, `DocOptions`), `ValidateLimits`, `ValidateTree` with `Options` hooks; `LoadWarnings`, `CheckValue`, `SimpleTypes` |
+| `xsd` (module root) | `Load`, `LoadFiles`, `LoadWith` (`LoadOptions`: `Fetch`, `MaxFetches`), `LoadZip`; `Hints`, `LoadHinted` (`HintOptions`: schema location hints, opt-in); `Schema.Validate`, `ValidateDoc` (warnings, `DocOptions`, `Entities` for DTD entities), `ValidateLimits`, `ValidateTree` with `Options` hooks; `LoadWarnings`, `CheckValue`, `SimpleTypes` |
 | `xsts` (nested module, tests only) | runs the W3C XML Schema Test Suite against this module |
 
 Limits: documents often come from untrusted peers. By default a document
@@ -138,50 +159,65 @@ cd xsts && XSTS_DIR=../xsdtests go test -v ./...
 ```
 
 Every test that applies to an XSD 1.0 processor is run (version tokens
-1.0, 1.0-2e, XML-1.0), with its accepted or stable expectation; queried or
-disputed tests, and instance tests that rely on `xsi:schemaLocation`, are
-skipped (183). A schema test passes when loading succeeds or fails as
-expected, an instance test when validation does. The test fails on any
-change from `xsts/testdata/known-failures.txt`: a new failure, or a
-listed test that now passes. `XSTS_DUMP=file` writes every failure with
-its documents; `XSTS_LOAD` and `XSTS_DOC` with `-run TestXSTSLoad` show
-one test's full outcome. Results on 2026-10-11, xsdtests master (v0.1.0's
-in brackets):
+1.0, 1.0-2e, XML-1.0), with its accepted or stable expectation; queried
+or disputed tests are skipped (150). A schema test passes when loading
+succeeds or fails as expected, an instance test when validation does. An
+instance document with `xsi:schemaLocation` or
+`xsi:noNamespaceSchemaLocation` is validated against the group's schema
+documents and the ones its hints name (`LoadHinted`); one whose hinted
+schema cannot be assembled counts as not valid, which some tests check.
+The test fails on any change from `xsts/testdata/known-failures.txt`: a
+new failure, or a listed test that now passes. `XSTS_DUMP=file` writes
+every failure with its documents; `XSTS_LOAD` and `XSTS_DOC` with `-run
+TestXSTSLoad` show one test's full outcome. `XSTS_FETCH_DIR` names a
+folder of local copies for the documents the suite imports by URL. Results on 2026-10-11,
+xsdtests master (7bc3365, 2026-04-01), without `XSTS_FETCH_DIR`
+(v0.2.0's in brackets):
 
 | Contributor | Schema tests, valid | Schema tests, invalid | Instance tests, valid | Instance tests, invalid | Total |
 |---|---|---|---|---|---|
-| NIST (datatypes) | 3,953/3,953 | – | 10,608/10,609 | 8,608/8,608 | 23,169/23,170 (23,169) |
-| Microsoft | 6,484/6,487 | 3,165/3,168 | 2,710/2,720 | 1,899/1,908 | 14,258/14,283 (12,864) |
-| Sun | 533/533 | 144/144 | 534/538 | 379/379 | 1,590/1,594 (1,422) |
-| Boeing | 6/6 | – | 12/12 | – | 18/18 (15) |
-| XSD 1.0 tests in the Saxonica and IBM sets | 39/52 | 23/23 | 29/45 | 47/59 | 138/179 (102) |
-| Suite metadata (introspection) | 0/1 | – | 0/91 | – | 0/92 (0) |
-| **All** | **11,015/11,032** | **3,332/3,335** | **13,893/14,015** | **10,933/10,954** | **39,173/39,336, 99.6 % (37,572, 95.5 %)** |
+| NIST (datatypes) | 3,953/3,953 | – | 10,608/10,609 | 8,608/8,608 | 23,169/23,170 (23,169/23,170) |
+| Microsoft | 6,484/6,487 | 3,165/3,168 | 2,733/2,739 | 1,913/1,922 | 14,295/14,316 (14,258/14,283) |
+| Sun | 533/533 | 144/144 | 536/538 | 379/379 | 1,592/1,594 (1,590/1,594) |
+| Boeing | 6/6 | – | 12/12 | – | 18/18 (18/18) |
+| XSD 1.0 tests in the Saxonica and IBM sets | 39/52 | 23/23 | 29/45 | 47/59 | 138/179 (138/179) |
+| Suite metadata (introspection) | 0/1 | – | 0/91 | – | 0/92 (0/92) |
+| **All** | **11,015/11,032** | **3,332/3,335** | **13,918/14,034** | **10,947/10,968** | **39,212/39,369, 99.6 % (39,173/39,336)** |
 
-The 163 failures, by cause (each is listed with its reason in
+With `XSTS_FETCH_DIR` holding copies of `http://www.w3.org/XML/2008/06/xlink.xsd`
+and `http://www.w3.org/2001/xml.xsd` (fetched from W3C on 2026-10-11, not
+included here), the 92 introspection tests pass too: **39,304/39,369,
+99.8 %**.
+
+The 157 failures, by cause (each is listed with its reason in
 `known-failures.txt`):
 
 - 92 introspection tests: their schema imports XLink from a URL that is
-  not part of the suite. `LoadOptions.Fetch` reads such documents
-  (`XSTS_FETCH_DIR` hands the harness a folder of local copies); the run
-  above had none.
+  not part of the suite (they pass when the harness is given a copy,
+  above).
 - 22 tests in the IBM and Saxonica sets that carry no version marking but
   use XSD 1.1 (`notQName`, `notNamespace`, assertions, `xs:error`), which
   this module refuses.
 - 12 Saxonica tests of schemas with references that never resolve to
-  components no document uses; this module refuses such a schema.
+  components no document uses; this module refuses such a schema (XSD
+  1.0 allows missing components until they are needed).
 - 7 XML 1.1 documents with characters encoding/xml refuses or accepts as
   XML 1.0 does.
-- 30 others: 4 strict wildcards met only through `xsi:schemaLocation`
-  hints; 5 instance tests whose schema is refused (an attribute group
-  redefined twice, a circular union the suite queries, a local type that
-  restricts the type it is declared in); 2 restrictions that only narrow
-  their base but that the letter of Particle Valid (Restriction) refuses,
-  accepted here; a child matched by an element declaration where the
-  content model's path gives it to a wildcard; the content-model work
+- 24 others: 5 instance tests whose schema is refused (an attribute
+  group redefined twice, a circular union the suite queries, a local type
+  that restricts the type it is declared in); 2 restrictions that only
+  narrow their base but that the letter of Particle Valid (Restriction)
+  refuses, accepted here; a child matched by an element declaration where
+  the content model's path gives it to a wildcard; the content-model work
   bound reached on purpose; and single cases of identity constraints,
   `QName` values, fixed values, prohibited attributes and lists of huge
   doubles.
+
+v0.3.0 runs 33 more tests (instance documents that name their schema by
+hints only), all passing, and passes 6 more: 4 strict wildcards met only
+through hints, and 2 documents whose hinted schema adds the declaration
+of their root or `xsi:type`. It also found and fixed an element with
+`xsi:type` but no declaration refused for `xsi:nil`.
 
 v0.1.0 accepted 1,310 invalid schemas and 99 invalid documents. v0.2.0
 checks the schema's own correctness (the schema for schema documents,

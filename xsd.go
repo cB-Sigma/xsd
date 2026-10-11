@@ -140,6 +140,7 @@ type Schema struct {
 	attrGroups map[qname]*attrGroupDef
 	anyType    *xtype
 	warnings   Errors
+	namespaces map[string]bool // target namespaces of the documents read
 }
 
 // LoadWarnings are what loading the schema accepted but noted, each with
@@ -406,6 +407,11 @@ func LoadFiles(fsys fs.FS, roots ...string) (*Schema, error) {
 // LoadWith reads one schema from root documents inside fsys like
 // LoadFiles, with options (LoadOptions).
 func LoadWith(fsys fs.FS, opt LoadOptions, roots ...string) (*Schema, error) {
+	return loadWith(fsys, opt, nil, roots)
+}
+
+// loadWith is LoadWith; the roots named in urls are URLs, fetched first.
+func loadWith(fsys fs.FS, opt LoadOptions, urls []string, roots []string) (*Schema, error) {
 	if len(roots) == 0 {
 		return nil, errors.New("no schema document given")
 	}
@@ -420,13 +426,30 @@ func LoadWith(fsys fs.FS, opt LoadOptions, roots ...string) (*Schema, error) {
 		fsys: fsys, docs: map[string]*schemaDoc{}, byContent: map[string]*schemaDoc{}, remote: map[string]string{}, roots: map[string]bool{},
 	}
 	l.builtins()
-	for _, root := range roots {
-		l.roots[path.Clean(root)] = true
+	remoteRoot := map[string]bool{}
+	for _, u := range urls {
+		if !l.fetchable(&node{}, u, u) {
+			return nil, fmt.Errorf("schema document %s: not fetched (%s)", u, fetchWhy(l, u))
+		}
+		remoteRoot[u] = true
+	}
+	key := func(root string) string {
+		if remoteRoot[root] {
+			return root
+		}
+		return path.Clean(root)
 	}
 	for _, root := range roots {
-		if _, err := l.load(path.Clean(root), "", false); err != nil {
+		l.roots[key(root)] = true
+	}
+	for _, root := range roots {
+		if _, err := l.load(key(root), "", false); err != nil {
 			return nil, err
 		}
+	}
+	l.s.namespaces = map[string]bool{}
+	for _, d := range l.ordered {
+		l.s.namespaces[d.tns] = true
 	}
 	// An import from a location outside the file system is not read; like
 	// a location that does not resolve, that is not an error by itself,
@@ -522,7 +545,7 @@ func (l *loader) load(p, wantNS string, include bool) (*schemaDoc, error) {
 		}
 		return d, nil
 	}
-	root, warn, err := parseDoc(b, Limits{}, false)
+	root, warn, err := parseDoc(b, Limits{}, false, false)
 	if err != nil {
 		return nil, fmt.Errorf("schema document %s: %w", p, err)
 	}

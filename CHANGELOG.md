@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.3.0 (2026-10-11)
+
+Schema location hints and DTD entities, both opt-in; on the W3C XML
+Schema Test Suite 39,212 of 39,369 XSD 1.0 tests pass (99.6 %), and
+39,304 (99.8 %) when the harness is given local copies of the two
+schemas the suite's metadata imports by URL. Existing functions keep
+their signatures; `Validate` still never follows hints or reads a DTD.
+
+### Added
+
+- `Hints` and `LoadHinted` (`HintOptions`): assemble the schema for a
+  document from the documents its `xsi:schemaLocation` and
+  `xsi:noNamespaceSchemaLocation` attributes name, on any element,
+  relative to the document, through `LoadOptions.Fetch` for URLs. Root
+  documents the caller gives win over hints for their namespace unless
+  `Override`. A new location for a namespace after an element of that
+  namespace is refused, as XSD 1.0 says.
+- `DocOptions.Entities` and `Limits.MaxEntityBytes`
+  (`DefaultMaxEntityBytes`, 1 MiB): internal general entities declared in
+  a document's DTD are expanded, nested ones included, with the total
+  expansion bounded before parsing and nesting bounded; external and
+  parameter entities and entities holding markup are refused when used.
+- The XSTS harness runs instance tests that name their schema only by
+  hints (33 more tests) and gives hinted documents to every instance test
+  that has them.
+- `FuzzEntities`.
+
+### Fixed
+
+- An element validated by `xsi:type` alone, without a declaration, was
+  refused when it had `xsi:nil="true"`; XSD 1.0 gives xsi:nil meaning
+  only through a declaration.
+
 ## v0.2.0 (2026-10-11)
 
 The schema's own correctness is now checked when it loads, `xs:redefine`

@@ -14,9 +14,12 @@ Specifications and data
 -----------------------
 
 W3C XML Schema 1.0 (Part 1: Structures, Part 2: Datatypes, Second
-Edition) and XML Path Language 1.0 are W3C recommendations; their
+Edition, with its errata), Extensible Markup Language (XML) 1.0 Fifth
+Edition and XML Path Language 1.0 are W3C recommendations; their
 structure and rules are implemented in our own words and code. No text is
-reproduced.
+reproduced; the schema for schema documents is restated as our own
+tables (s4s.go), not copied. The XML name character ranges in simple.go
+and regexclass.go are facts taken from XML 1.0 Fifth Edition.
 
 The Unicode block ranges in regex.go are facts taken from the Unicode
 Character Database (Blocks.txt, Unicode 3.1), Copyright Unicode, Inc.,

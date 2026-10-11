@@ -34,49 +34,44 @@ const (
 	nonSpc  = `\x{0}-\x{8}\x{B}\x{C}\x{E}-\x{1F}\x{21}-\x{10FFFF}`
 )
 
+// translateRegex reads an XSD regular expression strictly (what the XSD
+// grammar does not admit is refused: reluctant quantifiers, a quantifier
+// with nothing to repeat, unescaped ] { } outside a class, unbalanced
+// parentheses, a hyphen inside a class other than at its ends) and
+// writes the equivalent RE2 expression. Character classes are computed as
+// sets of code points (regexclass.go).
 func translateRegex(p string) (*regexp.Regexp, error) {
 	var b strings.Builder
 	rs := []rune(p)
-	inClass := false
-	classStart := false
+	atom := false  // something quantifiable precedes
+	quant := false // a quantifier precedes
+	depth := 0
 	for i := 0; i < len(rs); i++ {
 		c := rs[i]
-		atStart := classStart
-		classStart = false
-		switch {
-		case c == '\\':
+		switch c {
+		case '\\':
 			if i+1 >= len(rs) {
 				return nil, fmt.Errorf("pattern %q ends with a backslash", p)
 			}
 			i++
 			e := rs[i]
-			var in, out string // inside a class, outside a class
+			var out string
 			switch e {
 			case 'd':
-				in, out = `\p{Nd}`, `\p{Nd}`
+				out = `\p{Nd}`
 			case 'D':
-				in, out = `\P{Nd}`, `\P{Nd}`
+				out = `\P{Nd}`
 			case 's':
-				in, out = spaceSet, `[`+spaceSet+`]`
+				out = `[` + spaceSet + `]`
 			case 'S':
-				in, out = nonSpc, `[^`+spaceSet+`]`
+				out = `[^` + spaceSet + `]`
 			case 'w':
-				in, out = wordSet, `[`+wordSet+`]`
+				out = `[` + wordSet + `]`
 			case 'W':
-				in, out = nonWord, `[`+nonWord+`]`
-			case 'i':
-				in, out = nameStart, `[`+nameStart+`]`
-			case 'c':
-				in, out = nameChar, `[`+nameChar+`]`
-			case 'I', 'C':
-				if inClass {
-					return nil, fmt.Errorf("pattern %q: \\%c inside a character class is not supported", p, e)
-				}
-				set := nameStart
-				if e == 'C' {
-					set = nameChar
-				}
-				out = `[^` + set + `]`
+				out = `[` + nonWord + `]`
+			case 'i', 'I', 'c', 'C':
+				set, _ := escapeSet(e, "")
+				out = set.class()
 			case 'p', 'P':
 				j := i + 1
 				if j >= len(rs) || rs[j] != '{' {
@@ -91,91 +86,101 @@ func translateRegex(p string) (*regexp.Regexp, error) {
 				}
 				name := string(rs[j+1 : k])
 				i = k
-				if strings.HasPrefix(name, "Is") {
-					set, err := escapeSet(e, name)
-					if err != nil {
-						return nil, fmt.Errorf("pattern %q: Unicode block escape \\%c{%s} is not supported", p, e, name)
-					}
-					// \P{IsBlock} inside a class goes through parseClass
-					in, out = set.String(), set.class()
-					break
+				set, err := escapeSet(e, name)
+				if err != nil {
+					return nil, fmt.Errorf("pattern %q: %v", p, err)
 				}
-				in = `\` + string(e) + `{` + name + `}`
-				out = in
-			case 'n':
-				in, out = `\n`, `\n`
-			case 'r':
-				in, out = `\r`, `\r`
-			case 't':
-				in, out = `\t`, `\t`
-			case '\\', '|', '.', '-', '^', '?', '*', '+', '{', '}', '(', ')', '[', ']', '$':
-				in = `\` + string(e)
-				out = in
+				out = set.class()
 			default:
-				return nil, fmt.Errorf("pattern %q: unknown escape \\%c", p, e)
-			}
-			if inClass {
-				b.WriteString(in)
-			} else {
-				b.WriteString(out)
-			}
-		case inClass:
-			switch c {
-			case ']':
-				inClass = false
-				b.WriteByte(']')
-			case '[':
-				return nil, fmt.Errorf("pattern %q: character class subtraction or nested classes are not supported", p)
-			case '^':
-				if atStart {
-					b.WriteByte('^')
-				} else {
-					b.WriteString(`\^`)
+				ch, ok := singleEscape(e)
+				if !ok {
+					return nil, fmt.Errorf("pattern %q: unknown escape \\%c", p, e)
 				}
-			case '-':
-				if i+1 < len(rs) && rs[i+1] == '[' {
-					return nil, fmt.Errorf("pattern %q: character class subtraction is not supported", p)
-				}
-				b.WriteByte('-')
-			default:
-				b.WriteString(regexp.QuoteMeta(string(c)))
+				out = regexp.QuoteMeta(string(ch))
 			}
+			b.WriteString(out)
+			atom, quant = true, false
+		case '[':
+			set, end, err := parseClass(rs, i)
+			if err != nil {
+				return nil, fmt.Errorf("pattern %q: %w", p, err)
+			}
+			b.WriteString(set.class())
+			i = end
+			atom, quant = true, false
+		case ']', '}':
+			return nil, fmt.Errorf("pattern %q: unescaped %c", p, c)
+		case '(':
+			if i+1 < len(rs) && rs[i+1] == '?' {
+				return nil, fmt.Errorf("pattern %q: (? is not XSD regular expression syntax", p)
+			}
+			depth++
+			b.WriteString("(?:")
+			atom, quant = false, false
+		case ')':
+			depth--
+			if depth < 0 {
+				return nil, fmt.Errorf("pattern %q: unbalanced )", p)
+			}
+			b.WriteByte(')')
+			atom, quant = true, false
+		case '|':
+			b.WriteByte('|')
+			atom, quant = false, false
+		case '?', '*', '+':
+			if !atom || quant {
+				return nil, fmt.Errorf("pattern %q: quantifier %c has nothing to repeat", p, c)
+			}
+			b.WriteRune(c)
+			atom, quant = false, true
+		case '{':
+			k := i + 1
+			for k < len(rs) && rs[k] != '}' {
+				k++
+			}
+			if k >= len(rs) || !reQuantity.MatchString(string(rs[i+1:k])) {
+				return nil, fmt.Errorf("pattern %q: { does not start a quantifier {n}, {n,} or {n,m}", p)
+			}
+			if !atom || quant {
+				return nil, fmt.Errorf("pattern %q: quantifier has nothing to repeat", p)
+			}
+			q := string(rs[i+1 : k])
+			if lo, hi, ok := strings.Cut(q, ","); ok && hi != "" && digitsLess(hi, lo) {
+				return nil, fmt.Errorf("pattern %q: quantifier {%s} has its bounds reversed", p, q)
+			}
+			b.WriteString("{" + q + "}")
+			i = k
+			atom, quant = false, true
+		case '^', '$':
+			b.WriteString(`\` + string(c))
+			atom, quant = true, false
+		case '.':
+			b.WriteString(`[^\n\r]`)
+			atom, quant = true, false
 		default:
-			switch c {
-			case '[':
-				if needsSets(rs, i) {
-					set, end, err := parseClass(rs, i)
-					if err != nil {
-						return nil, fmt.Errorf("pattern %q: %w", p, err)
-					}
-					b.WriteString(set.class())
-					i = end
-					continue
-				}
-				inClass, classStart = true, true
-				b.WriteByte('[')
-			case '^', '$':
-				b.WriteString(`\` + string(c))
-			case '.':
-				b.WriteString(`[^\n\r]`)
-			case '(':
-				if i+1 < len(rs) && rs[i+1] == '?' {
-					return nil, fmt.Errorf("pattern %q: (? is not XSD regular expression syntax", p)
-				}
-				b.WriteString("(?:")
-			default:
-				b.WriteRune(c)
-			}
+			b.WriteString(regexp.QuoteMeta(string(c)))
+			atom, quant = true, false
 		}
 	}
-	if inClass {
-		return nil, fmt.Errorf("pattern %q: unclosed character class", p)
+	if depth != 0 {
+		return nil, fmt.Errorf("pattern %q: unbalanced (", p)
 	}
 	re, err := regexp.Compile(`^(?:` + b.String() + `)$`)
 	if err != nil {
 		return nil, fmt.Errorf("pattern %q: %w", p, err)
 	}
 	return re, nil
+}
+
+var reQuantity = regexp.MustCompile(`^[0-9]+(,[0-9]*)?$`)
+
+// digitsLess compares two strings of decimal digits as numbers.
+func digitsLess(a, b string) bool {
+	a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+	if len(a) != len(b) {
+		return len(a) < len(b)
+	}
+	return a < b
 }
 
 // unicodeBlocks are the code point ranges of the Unicode 3.1 blocks (the

@@ -135,6 +135,15 @@ func (s runeSet) class() string {
 	return "[" + s.String() + "]"
 }
 
+// The XML 1.0 (fifth edition) name characters, for \i and \c: the
+// NameStartChar ranges, and what NameChar adds to them.
+var (
+	xmlNameStartSet = []runeRange{{':', ':'}, {'A', 'Z'}, {'_', '_'}, {'a', 'z'}, {0xC0, 0xD6}, {0xD8, 0xF6},
+		{0xF8, 0x2FF}, {0x370, 0x37D}, {0x37F, 0x1FFF}, {0x200C, 0x200D}, {0x2070, 0x218F}, {0x2C00, 0x2FEF},
+		{0x3001, 0xD7FF}, {0xF900, 0xFDCF}, {0xFDF0, 0xFFFD}, {0x10000, 0xEFFFF}}
+	xmlNameCharExtra = []runeRange{{'-', '-'}, {'.', '.'}, {'0', '9'}, {0xB7, 0xB7}, {0x300, 0x36F}, {0x203F, 0x2040}}
+)
+
 // escapeSet is the set of a multi-character escape (\d, \s, \w, \i, \c,
 // their capitals, \p{..}, \P{..}); name is the property name for p and P.
 func escapeSet(e rune, name string) (runeSet, error) {
@@ -152,13 +161,13 @@ func escapeSet(e rune, name string) (runeSet, error) {
 	case 'W':
 		return negate(categories("L", "M", "N", "S")), nil
 	case 'i', 'I':
-		s := union(categories("L", "Nl"), chars('_', ':'))
+		s := normalize(append([]runeRange(nil), xmlNameStartSet...))
 		if e == 'I' {
 			s = negate(s)
 		}
 		return s, nil
 	case 'c', 'C':
-		s := union(categories("L", "Nl", "Mn", "Mc", "Nd", "Lm"), chars('.', '_', ':', '-', 0xB7))
+		s := normalize(append(append([]runeRange(nil), xmlNameStartSet...), xmlNameCharExtra...))
 		if e == 'C' {
 			s = negate(s)
 		}
@@ -201,39 +210,6 @@ func singleEscape(e rune) (rune, bool) {
 	return 0, false
 }
 
-// needsSets reports whether the class starting at rs[i] ('[') uses
-// subtraction, \P{IsBlock}, \I or \C, which only the set form can write.
-func needsSets(rs []rune, i int) bool {
-	depth := 0
-	for ; i < len(rs); i++ {
-		switch rs[i] {
-		case '\\':
-			if i+1 < len(rs) {
-				switch rs[i+1] {
-				case 'I', 'C':
-					return true
-				case 'P':
-					if i+4 < len(rs) && rs[i+2] == '{' && rs[i+3] == 'I' && rs[i+4] == 's' {
-						return true
-					}
-				}
-			}
-			i++
-		case '[':
-			if depth > 0 {
-				return true // a nested class: subtraction
-			}
-			depth++
-		case ']':
-			depth--
-			if depth == 0 {
-				return false
-			}
-		}
-	}
-	return false
-}
-
 // parseClass reads the class starting at rs[i] ('[') as a set, with
 // subtraction. It returns the set and the index of the closing ']'.
 func parseClass(rs []rune, i int) (runeSet, int, error) {
@@ -246,7 +222,10 @@ func parseClass(rs []rune, i int) (runeSet, int, error) {
 	var set runeSet
 	var sub runeSet
 	hasSub := false
-	first := true
+	if i < len(rs) && rs[i] == ']' {
+		return nil, 0, fmt.Errorf("a character class may not be empty or start with an unescaped ]")
+	}
+	items := 0
 	// atom reads one character or escape at rs[i]: a single character
 	// (ok) or a set (multi-character escape).
 	atom := func() (rune, runeSet, bool, error) {
@@ -289,10 +268,13 @@ func parseClass(rs []rune, i int) (runeSet, int, error) {
 			return nil, 0, fmt.Errorf("unclosed character class")
 		}
 		c := rs[i]
-		if c == ']' && !first {
+		if c == ']' {
 			break
 		}
 		if c == '-' && i+1 < len(rs) && rs[i+1] == '[' {
+			if items == 0 {
+				return nil, 0, fmt.Errorf("a class subtraction needs characters to subtract from")
+			}
 			s, end, err := parseClass(rs, i+1)
 			if err != nil {
 				return nil, 0, err
@@ -307,7 +289,10 @@ func parseClass(rs []rune, i int) (runeSet, int, error) {
 		if c == '[' {
 			return nil, 0, fmt.Errorf("nested character class")
 		}
-		first = false
+		if c == '-' && items > 0 && !(i+1 < len(rs) && rs[i+1] == ']') && !(i+2 < len(rs) && rs[i+1] == '-' && rs[i+2] == '[') {
+			return nil, 0, fmt.Errorf("an unescaped - inside a character class must be its first or last character")
+		}
+		items++
 		lo, s, single, err := atom()
 		if err != nil {
 			return nil, 0, err

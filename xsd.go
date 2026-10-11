@@ -20,7 +20,8 @@
 // types by restriction (enumeration, pattern, length, minLength,
 // maxLength, min/max Inclusive/Exclusive, totalDigits, fractionDigits,
 // whiteSpace), list and union; xsi:type (checked to derive from the
-// declared type), xsi:nil; all XSD 1.0 built-in datatypes; ID uniqueness
+// declared type in a way neither the declaration nor its type blocks),
+// xsi:nil; block and final on elements and types; all XSD 1.0 built-in datatypes; ID uniqueness
 // and IDREF resolution. The xml: attributes (lang, space, base, id) are
 // predefined when no loaded schema declares them.
 //
@@ -45,19 +46,25 @@
 // white space before it is accepted with a warning unless
 // DocOptions.StrictProlog is set.
 //
-// Refused at load time with an error naming the construct (so nothing is
-// silently accepted): xs:redefine, identity constraint paths outside the
-// XPath subset, XSD 1.1 constructs, pattern features RE2 cannot express
-// (Unicode block escapes, class subtraction) and range facets on types
-// other than numbers, dates and times. Other schema-component constraints
-// that only concern the schema's own correctness (for instance that a
-// restriction really restricts its base) are not checked: the schema is
-// trusted to be correct.
+// xs:redefine is supported (redefine.go). A location that does not
+// resolve is not an error (LoadWarnings names it); documents named by URL
+// are read only through LoadOptions.Fetch (fetch.go).
+//
+// The schema's own correctness is checked when it loads, and a schema
+// that breaks a constraint XSD 1.0 puts on schemas is refused with an
+// error naming it: the representation rules of the schema for schema
+// documents (s4s.go), the facet rules (facetrules.go), the component
+// constraints on declarations, derivations, substitution groups and
+// value constraints (components.go), derivation of complex types by
+// restriction (restrict.go), the XSD regular expression grammar
+// (regex.go) and Unique Particle Attribution (upa.go). XSD 1.1
+// constructs are refused the same way.
 package xsd
 
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -308,7 +315,8 @@ const (
 
 type particle struct {
 	kind     int
-	min, max int // max -1: unbounded
+	groupRef bool // a reference to a named model group (its one item is the group's model)
+	min, max int  // max -1: unbounded
 	items    []*particle
 	elem     *elemDecl
 	wc       *wildcard
@@ -319,6 +327,10 @@ type groupDef struct {
 	state int
 	raw   *node
 	doc   *schemaDoc
+	// depth is the loader's type nesting when building started; pending
+	// are references reached through a type inside the group itself
+	depth   int
+	pending []*particle
 }
 
 type attrGroupDef struct {
@@ -333,7 +345,8 @@ type attrGroupDef struct {
 type schemaDoc struct {
 	path          string
 	tns           string
-	chameleon     bool // included without a target namespace: tns is the includer's
+	chameleon     bool            // included without a target namespace: tns is the includer's
+	imports       map[string]bool // namespaces the document imports
 	elemQualified bool
 	attrQualified bool
 	root          *node
@@ -354,6 +367,26 @@ type loader struct {
 	roots   map[string]bool   // root documents, which may declare any namespace
 	ordered []*schemaDoc
 	idcs    []idcAt
+	built   []*xtype    // every type built, named or anonymous, for the component checks
+	locals  []*elemDecl // local element declarations
+	uses    []useAt     // attribute uses as written
+	redef   map[*node]*redef
+	redefs  int
+	// typeDepth counts complex types being built, so a group reached
+	// again through an element's type inside it is told from a group
+	// containing itself
+	typeDepth int
+	byContent map[string]*schemaDoc // documents by content and namespace
+	opt       LoadOptions
+	fetched   map[string][]byte // documents read through LoadOptions.Fetch
+	notations map[qname]bool
+}
+
+// useAt is an attribute use with where it was written.
+type useAt struct {
+	u *attrUse
+	d *schemaDoc
+	n *node
 }
 
 // Load reads the schema whose root document is root inside fsys, with
@@ -367,15 +400,24 @@ func Load(fsys fs.FS, root string) (*Schema, error) {
 // every document each includes or imports. A document named twice, or
 // reached from two roots, is read once.
 func LoadFiles(fsys fs.FS, roots ...string) (*Schema, error) {
+	return LoadWith(fsys, LoadOptions{}, roots...)
+}
+
+// LoadWith reads one schema from root documents inside fsys like
+// LoadFiles, with options (LoadOptions).
+func LoadWith(fsys fs.FS, opt LoadOptions, roots ...string) (*Schema, error) {
 	if len(roots) == 0 {
 		return nil, errors.New("no schema document given")
 	}
 	l := &loader{
+		opt:       opt,
+		fetched:   map[string][]byte{},
+		notations: map[qname]bool{},
 		s: &Schema{
 			elems: map[qname]*elemDecl{}, types: map[qname]*xtype{}, attrs: map[qname]*attrDecl{},
 			groups: map[qname]*groupDef{}, attrGroups: map[qname]*attrGroupDef{},
 		},
-		fsys: fsys, docs: map[string]*schemaDoc{}, remote: map[string]string{}, roots: map[string]bool{},
+		fsys: fsys, docs: map[string]*schemaDoc{}, byContent: map[string]*schemaDoc{}, remote: map[string]string{}, roots: map[string]bool{},
 	}
 	l.builtins()
 	for _, root := range roots {
@@ -386,12 +428,23 @@ func LoadFiles(fsys fs.FS, roots ...string) (*Schema, error) {
 			return nil, err
 		}
 	}
+	// An import from a location outside the file system is not read; like
+	// a location that does not resolve, that is not an error by itself,
+	// only references into the namespace fail.
+	var unread []string
 	for ns, loc := range l.remote {
 		if !l.hasNamespace(ns) {
-			return nil, fmt.Errorf("namespace %q is imported from %s, which is not in the supplied schema files", ns, loc)
+			unread = append(unread, fmt.Sprintf("namespace %q from %s", ns, loc))
 		}
 	}
+	sort.Strings(unread)
+	for _, u := range unread {
+		l.s.warnings = append(l.s.warnings, Issue{Kind: IssueOther, Msg: "xs:import of " + u + ": not in the supplied schema files (ignored)"})
+	}
 	if err := l.build(); err != nil {
+		if len(unread) > 0 {
+			return nil, fmt.Errorf("%w (not read: %s)", err, strings.Join(unread, ", "))
+		}
 		return nil, err
 	}
 	return l.s, nil
@@ -447,11 +500,27 @@ func (l *loader) load(p, wantNS string, include bool) (*schemaDoc, error) {
 		}
 	}
 	if d, ok := l.docs[p]; ok && !(include && wantNS != "" && d.tns == "") {
+		if !include && d.tns != wantNS && !(wantNS == "" && l.roots[p]) {
+			return nil, fmt.Errorf("schema document %s: imported for namespace %q but declares %q", p, wantNS, d.tns)
+		}
 		return d, nil
 	}
-	b, err := fs.ReadFile(l.fsys, p)
+	b, err := l.read(p)
 	if err != nil {
 		return nil, fmt.Errorf("schema document %s: %w", p, err)
+	}
+	// the same document reached by a second name (a case-insensitive file
+	// system, a link) is the same document
+	sum := sha256.Sum256(b)
+	contentKey := string(sum[:])
+	if include && wantNS != "" {
+		contentKey += "\x00" + wantNS // a chameleon copy per namespace
+	}
+	if d, ok := l.byContent[contentKey]; ok && (d.tns == wantNS || include || wantNS == "" && l.roots[p]) {
+		if !d.chameleon {
+			l.docs[p] = d
+		}
+		return d, nil
 	}
 	root, warn, err := parseDoc(b, Limits{}, false)
 	if err != nil {
@@ -465,6 +534,9 @@ func (l *loader) load(p, wantNS string, include bool) (*schemaDoc, error) {
 		return nil, fmt.Errorf("schema document %s: root element is %s, not xs:schema", p, root.name)
 	}
 	d := &schemaDoc{path: p, root: root}
+	if err := checkS4S(d); err != nil {
+		return nil, err
+	}
 	d.tns, _ = root.attr("targetNamespace")
 	v, _ := root.attr("elementFormDefault")
 	d.elemQualified = v == "qualified"
@@ -483,6 +555,7 @@ func (l *loader) load(p, wantNS string, include bool) (*schemaDoc, error) {
 		return nil, fmt.Errorf("schema document %s: imported for namespace %q but declares %q", p, wantNS, d.tns)
 	}
 	l.docs[key] = d
+	l.byContent[contentKey] = d
 	l.ordered = append(l.ordered, d)
 	for _, c := range root.children {
 		if c.name.Space != nsXS {
@@ -497,32 +570,53 @@ func (l *loader) load(p, wantNS string, include bool) (*schemaDoc, error) {
 				ns = d.tns
 			} else if ns == d.tns {
 				return nil, d.errf(c, "xs:import of the document's own target namespace")
+			} else {
+				if d.imports == nil {
+					d.imports = map[string]bool{}
+				}
+				d.imports[ns] = true
 			}
 			if !hasLoc {
 				continue // resolved from documents loaded otherwise, or by references failing
 			}
-			if strings.Contains(loc, "://") || strings.HasPrefix(loc, "/") {
-				if c.name.Local == "include" {
-					return nil, d.errf(c, "xs:include of %s: only relative locations inside the schema files are supported", loc)
+			target, remote, err := l.locate(d, loc)
+			if err != nil {
+				return nil, d.errf(c, "%v", err)
+			}
+			if remote && !l.fetchable(c, p, target) {
+				if c.name.Local == "import" {
+					l.remote[ns] = loc
+				} else {
+					l.s.warnings = append(l.s.warnings, Issue{Line: c.line, Path: p, Kind: IssueOther,
+						Msg: fmt.Sprintf("xs:include of %s: not read (ignored)", loc)})
 				}
-				l.remote[ns] = loc
 				continue
 			}
-			target := path.Join(path.Dir(p), loc)
-			if strings.HasPrefix(target, "../") || target == ".." {
-				return nil, d.errf(c, "schemaLocation %s points outside the schema files", loc)
+			if !l.exists(target) {
+				// a location that does not resolve is not an error (XSD 1.0
+				// 4.2.1, 4.2.3): what it would have declared is missing
+				l.s.warnings = append(l.s.warnings, Issue{Line: c.line, Path: p, Kind: IssueOther,
+					Msg: fmt.Sprintf("xs:%s of %s: no such schema document (ignored)", c.name.Local, loc)})
+				continue
 			}
 			if _, err := l.load(target, ns, c.name.Local == "include"); err != nil {
 				return nil, err
 			}
 		case "redefine":
-			return nil, d.errf(c, "xs:redefine is not supported")
+			if err := l.redefine(d, c); err != nil {
+				return nil, err
+			}
 		case "element", "complexType", "simpleType", "attribute", "group", "attributeGroup":
 			if err := l.register(d, c); err != nil {
 				return nil, err
 			}
 		case "notation":
-			// declarations only; NOTATION-typed values are checked lexically
+			name, _ := c.attr("name")
+			q := qname{d.tns, collapse(name)}
+			if l.notations[q] {
+				return nil, d.errf(c, "notation %s is declared twice", q.Local)
+			}
+			l.notations[q] = true
 		default:
 			return nil, d.errf(c, "xs:%s is not supported", c.name.Local)
 		}
@@ -588,7 +682,7 @@ func (l *loader) builtins() {
 		if t := s.types[q]; t != nil {
 			return t
 		}
-		t := &xtype{name: q, state: stDone, builtin: name, ws: builtinWS(name)}
+		t := &xtype{name: q, state: stDone, builtin: name, ws: builtinWS(name), derivation: "restriction"}
 		s.types[q] = t
 		if b := builtinBase[name]; b == "anyType" {
 			t.base = any
@@ -596,7 +690,7 @@ func (l *loader) builtins() {
 			t.base = def(b)
 		}
 		if item, ok := builtinLists[name]; ok {
-			t.variety, t.item, t.builtin, t.ws = varList, def(item), "", wsCollapse
+			t.variety, t.item, t.builtin, t.ws, t.derivation = varList, def(item), "", wsCollapse, "list"
 			t.facets = newFacetSet()
 			t.facets.minLength = 1
 		}
@@ -676,6 +770,9 @@ func (l *loader) build() error {
 				return e.doc.errf(e.raw, "substitution group of %s is circular", e.name)
 			}
 			seen[h] = true
+			if !substitutable(e, h) {
+				continue // the head blocks this member
+			}
 			if h.members == nil {
 				h.members = map[qname]*elemDecl{}
 			}
@@ -683,7 +780,18 @@ func (l *loader) build() error {
 			h.memberSeq = append(h.memberSeq, e)
 		}
 	}
+	// leaves again: references to groups that were still being built
+	// were filled in afterwards
+	for _, t := range l.complex {
+		t.leaves = collectLeaves(t.content)
+	}
 	if err := l.resolveIDCs(); err != nil {
+		return err
+	}
+	if err := l.checkComponents(); err != nil {
+		return err
+	}
+	if err := l.checkRedefines(); err != nil {
 		return err
 	}
 	for _, t := range l.complex {
@@ -727,7 +835,26 @@ func (l *loader) ref(d *schemaDoc, n *node, attrName string) (qname, bool, error
 	if err != nil {
 		return qname{}, true, d.errf(n, "%s: %v", attrName, err)
 	}
-	return d.coerce(q), true, nil
+	if !d.visible(q) {
+		return qname{}, true, d.errf(n, "%s: %s is in namespace %q, which the schema document does not import", attrName, v, q.Space)
+	}
+	return l.redefined(n, attrName, d.coerce(q)), true, nil
+}
+
+// visible reports whether a document may refer to a component of q's
+// namespace: its own, the XML Schema namespace, or one it imports.
+func (d *schemaDoc) visible(q qname) bool {
+	switch {
+	case q.Space == d.tns, q.Space == nsXS, d.imports[q.Space]:
+		return true
+	case q.Space == nsXML:
+		// the xml: attributes are predefined here, so a reference to
+		// them is accepted without importing their namespace
+		return true
+	case q.Space == "" && d.chameleon:
+		return true
+	}
+	return false
 }
 
 // coerce moves a reference to a component in no namespace into the
@@ -761,7 +888,9 @@ func (l *loader) buildType(t *xtype) error {
 	t.state = stBuilding
 	var err error
 	if t.complex {
+		l.typeDepth++
 		err = l.buildComplex(t)
+		l.typeDepth--
 	} else {
 		err = l.buildSimple(t)
 	}
@@ -769,6 +898,7 @@ func (l *loader) buildType(t *xtype) error {
 		return err
 	}
 	t.state = stDone
+	l.built = append(l.built, t)
 	return nil
 }
 
@@ -826,6 +956,9 @@ func (l *loader) buildSimple(t *xtype) error {
 				return err
 			}
 		}
+		if err := l.buildType(it); err != nil {
+			return err
+		}
 		if it.complex {
 			return d.errf(c, "list item type %s is complex", it.label())
 		}
@@ -838,10 +971,16 @@ func (l *loader) buildSimple(t *xtype) error {
 				if err != nil {
 					return d.errf(c, "memberTypes: %v", err)
 				}
+				if !d.visible(q) {
+					return d.errf(c, "memberTypes: %s is in namespace %q, which the schema document does not import", f, q.Space)
+				}
 				q = d.coerce(q)
 				m := l.s.types[q]
 				if m == nil {
 					return d.errf(c, "member type %s is not defined", q)
+				}
+				if err := l.buildType(m); err != nil {
+					return err
 				}
 				if m.complex {
 					return d.errf(c, "member type %s is complex", q)
@@ -906,10 +1045,6 @@ func (l *loader) simpleBase(d *schemaDoc, c *node) (*xtype, error) {
 func (l *loader) facets(t *xtype, kids []*node) error {
 	d := t.doc
 	f := newFacetSet()
-	prim := ""
-	if t.variety == varAtomic {
-		prim = primitive(t.builtin)
-	}
 	intVal := func(c *node, v string) (int, error) {
 		n, err := strconv.Atoi(strings.TrimSpace(v))
 		if err != nil || n < 0 {
@@ -918,6 +1053,7 @@ func (l *loader) facets(t *xtype, kids []*node) error {
 		return n, nil
 	}
 	any := false
+	byFacet := map[string]*node{}
 	for _, c := range kids {
 		switch c.name.Local {
 		case "enumeration", "pattern", "length", "minLength", "maxLength", "totalDigits", "fractionDigits",
@@ -928,6 +1064,21 @@ func (l *loader) facets(t *xtype, kids []*node) error {
 		v, ok := c.attr("value")
 		if !ok {
 			return d.errf(c, "facet xs:%s without a value", c.name.Local)
+		}
+		if !facetApplies(t, c.name.Local) {
+			return d.errf(c, "facet xs:%s does not apply to %s", c.name.Local, facetSubject(t))
+		}
+		if byFacet[c.name.Local] != nil && c.name.Local != "enumeration" && c.name.Local != "pattern" {
+			return d.errf(c, "facet xs:%s is given twice in one restriction", c.name.Local)
+		}
+		byFacet[c.name.Local] = c
+		if fx, ok := c.attr("fixed"); ok {
+			if b, _ := parseBool(fx); b {
+				if f.fixed == nil {
+					f.fixed = map[string]bool{}
+				}
+				f.fixed[c.name.Local] = true
+			}
 		}
 		any = true
 		var err error
@@ -948,11 +1099,13 @@ func (l *loader) facets(t *xtype, kids []*node) error {
 		case "maxLength":
 			f.maxLength, err = intVal(c, v)
 		case "totalDigits":
-			f.totalDigits, err = intVal(c, v)
+			if f.totalDigits, err = intVal(c, v); err == nil && f.totalDigits == 0 {
+				err = d.errf(c, "facet totalDigits needs a positive integer")
+			}
 		case "fractionDigits":
 			f.fractionDigits, err = intVal(c, v)
 		case "whiteSpace":
-			switch v {
+			switch collapse(v) {
 			case "preserve":
 				t.ws = wsPreserve
 			case "replace":
@@ -962,10 +1115,8 @@ func (l *loader) facets(t *xtype, kids []*node) error {
 			default:
 				return d.errf(c, "whiteSpace %q", v)
 			}
+			f.ws = t.ws
 		case "minInclusive", "maxInclusive", "minExclusive", "maxExclusive":
-			if !isNumeric(prim) && !isOrderedTime(prim) {
-				return d.errf(c, "range facet xs:%s on a %s value is not supported", c.name.Local, orWord(prim, t.label()))
-			}
 			v = collapse(v)
 			if why := builtinCheck(t.builtin, v, c); why != "" {
 				return d.errf(c, "facet xs:%s value %q %s", c.name.Local, v, why)
@@ -987,10 +1138,11 @@ func (l *loader) facets(t *xtype, kids []*node) error {
 			return err
 		}
 	}
-	if any {
-		t.facets = f
+	if !any {
+		return nil
 	}
-	return nil
+	t.facets = f
+	return l.facetRules(t, f, byFacet)
 }
 
 func orWord(a, b string) string {
@@ -1000,10 +1152,28 @@ func orWord(a, b string) string {
 	return b
 }
 
+// occursCap stands for occurrence bounds too large to count: no document
+// within reason has that many children, and the content walk has a work
+// bound anyway.
+const occursCap = 1 << 30
+
+// occursValue reads a non-negative integer bound, capping huge ones.
+func occursValue(v string) (int, error) {
+	v = strings.TrimSpace(v)
+	if !reNonNeg.MatchString(v) {
+		return 0, fmt.Errorf("not a non-negative integer")
+	}
+	x, err := strconv.Atoi(strings.TrimPrefix(v, "+"))
+	if err != nil || x > occursCap {
+		x = occursCap
+	}
+	return x, nil
+}
+
 func occurs(d *schemaDoc, n *node) (int, int, error) {
 	min, max := 1, 1
 	if v, ok := n.attr("minOccurs"); ok {
-		x, err := strconv.Atoi(strings.TrimSpace(v))
+		x, err := occursValue(v)
 		if err != nil || x < 0 {
 			return 0, 0, d.errf(n, "minOccurs %q", v)
 		}
@@ -1014,7 +1184,7 @@ func occurs(d *schemaDoc, n *node) (int, int, error) {
 		if v == "unbounded" {
 			max = -1
 		} else {
-			x, err := strconv.Atoi(v)
+			x, err := occursValue(v)
 			if err != nil || x < 0 {
 				return 0, 0, d.errf(n, "maxOccurs %q", v)
 			}
@@ -1128,15 +1298,20 @@ func (l *loader) complexContent(t *xtype, cc *node) error {
 	t.base, t.derivation = base, c.name.Local
 	if c.name.Local == "extension" {
 		switch {
-		case base.content == nil:
+		case base.content == nil || isEmptyGroup(base.content) && model != nil:
 			t.content = model
-		case model == nil:
+		case model == nil || isEmptyGroup(model):
+			// no particles of its own: the base's content type, mixed or
+			// not, unless the extension says mixed itself
 			t.content = base.content
+			t.mixed = t.mixed || base.mixed
 		default:
 			t.content = &particle{kind: pSeq, min: 1, max: 1, items: []*particle{base.content, model}}
 		}
 		t.attrs = mergeAttrs(base.attrs, own, false)
-		t.anyAttr = append(append([]*wildcard(nil), base.anyAttr...), wc...)
+		if t.anyAttr, err = extendWildcards(d, c, base.anyAttr, wc); err != nil {
+			return err
+		}
 		return nil
 	}
 	t.content = model
@@ -1181,7 +1356,9 @@ func (l *loader) simpleContent(t *xtype, sc *node) error {
 		case base.simpleContent != nil:
 			t.simpleContent = base.simpleContent
 			t.attrs = mergeAttrs(base.attrs, own, false)
-			t.anyAttr = append(append([]*wildcard(nil), base.anyAttr...), wc...)
+			if t.anyAttr, err = extendWildcards(d, c, base.anyAttr, wc); err != nil {
+				return err
+			}
 		default:
 			return d.errf(c, "simple content extends %s, which has no simple content", base.label())
 		}
@@ -1194,6 +1371,9 @@ func (l *loader) simpleContent(t *xtype, sc *node) error {
 	if len(inner) > 0 && inner[0].name.Local == "simpleType" {
 		if st.base, err = l.anonymous(d, inner[0]); err != nil {
 			return err
+		}
+		if !derivesOK(st.base, base.simpleContent, derivSet{"extension": true}) {
+			return d.errf(inner[0], "the simple type of a simple content restriction must derive from the base's, %s", base.simpleContent.label())
 		}
 		inner = inner[1:]
 	}
@@ -1278,11 +1458,18 @@ func (l *loader) particle(d *schemaDoc, n *node) (*particle, error) {
 		if g == nil {
 			return nil, d.errf(n, "group %s is not defined", q)
 		}
+		if g.state == stBuilding && l.typeDepth > g.depth {
+			// the group is reached again through an element's type inside
+			// it, which is allowed: the model is filled in once built
+			p := &particle{kind: pSeq, min: min, max: max, groupRef: true}
+			g.pending = append(g.pending, p)
+			return p, nil
+		}
 		model, err := l.buildGroup(g)
 		if err != nil {
 			return nil, err
 		}
-		return &particle{kind: pSeq, min: min, max: max, items: []*particle{model}}, nil
+		return &particle{kind: pSeq, min: min, max: max, items: []*particle{model}, groupRef: true}, nil
 	case "sequence", "choice", "all":
 		kind := map[string]int{"sequence": pSeq, "choice": pChoice, "all": pAll}[n.name.Local]
 		p := &particle{kind: kind, min: min, max: max}
@@ -1356,6 +1543,7 @@ func (l *loader) buildGroup(g *groupDef) (*particle, error) {
 		return nil, g.doc.errf(g.raw, "model group refers to itself")
 	}
 	g.state = stBuilding
+	g.depth = l.typeDepth
 	kids, err := xsChildren(g.doc, g.raw)
 	if err != nil {
 		return nil, err
@@ -1374,6 +1562,10 @@ func (l *loader) buildGroup(g *groupDef) (*particle, error) {
 	if g.model, err = l.particle(g.doc, kids[0]); err != nil {
 		return nil, err
 	}
+	for _, p := range g.pending {
+		p.items = []*particle{g.model}
+	}
+	g.pending = nil
 	g.state = stDone
 	return g.model, nil
 }
@@ -1499,6 +1691,7 @@ func (l *loader) localElem(d *schemaDoc, n *node) (*elemDecl, error) {
 		q.Space = d.tns
 	}
 	e := &elemDecl{name: q, raw: n, doc: d, state: stBuilding}
+	l.locals = append(l.locals, e)
 	if err := l.elemCommon(e); err != nil {
 		return nil, err
 	}
@@ -1638,6 +1831,7 @@ func (l *loader) attributeDecls(d *schemaDoc, kids []*node) ([]*attrUse, []*wild
 				}
 				u.decl = a
 			}
+			l.uses = append(l.uses, useAt{u, d, c})
 			if err := add(c, u); err != nil {
 				return nil, nil, err
 			}
@@ -1675,7 +1869,22 @@ func (l *loader) attributeDecls(d *schemaDoc, kids []*node) ([]*attrUse, []*wild
 		}
 	}
 	if len(wcs) > 1 {
-		return nil, nil, d.errf(kids[0], "more than one attribute wildcard in one definition (their intersection) is not supported")
+		// the wildcards of the attribute groups and the definition's own
+		// combine by intersection, processed as the definition's own says
+		// (or the first group's)
+		w := wcs[0]
+		process := w.process
+		if own := wcs[len(wcs)-1]; kids[len(kids)-1].name.Local == "anyAttribute" {
+			process = own.process
+		}
+		for _, x := range wcs[1:] {
+			var ok bool
+			if w, ok = intersectWildcards(w, x); !ok {
+				return nil, nil, d.errf(kids[0], "the attribute wildcards of one definition have an intersection XML Schema 1.0 cannot express")
+			}
+		}
+		w.process = process
+		wcs = []*wildcard{w}
 	}
 	return uses, wcs, nil
 }

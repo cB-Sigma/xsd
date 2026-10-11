@@ -36,10 +36,24 @@ func (r *run) validate(root *node) {
 	r.types = map[*node]*xtype{}
 	decl := r.s.elems[root.name]
 	if decl == nil {
+		// a root the schema does not declare may still name its type
+		if _, has := root.attrNS(nsXSI, "type"); has {
+			if xt, ok := r.xsiType(root); ok && xt != nil {
+				r.typed(root, xt, nil)
+				r.finish(root)
+			}
+			return
+		}
 		r.report(root, IssueRoot, "the root element %s is not a global element of the schema", root.name)
 		return
 	}
 	r.element(root, decl)
+	r.finish(root)
+}
+
+// finish runs the checks that need the whole document: IDREF resolution
+// and identity constraints.
+func (r *run) finish(root *node) {
 	for _, x := range r.idrefs {
 		if _, ok := r.ids[x.v]; !ok {
 			r.report(x.n, IssueID, "IDREF %q does not name an ID in the document", x.v)
@@ -125,8 +139,20 @@ func (r *run) element(n *node, decl *elemDecl) {
 		return
 	}
 	if xt != nil {
-		if !derivedFrom(xt, t) {
+		if !derivedFrom(xt, t) && !(xt != t && !t.complex && !xt.complex && derivesOK(xt, t, nil)) {
 			r.fail(n, "xsi:type %s is not derived from the declared type %s", xt.label(), t.label())
+			return
+		}
+		// the declaration and the declared type may block derivations
+		blocked := derivSet{}
+		for w := range elemBlock(decl) {
+			blocked[w] = true
+		}
+		for w := range typeBlock(t) {
+			blocked[w] = true
+		}
+		if !derivesOK(xt, t, blocked) {
+			r.fail(n, "xsi:type %s derives from the declared type %s in a way the declaration or its type blocks", xt.label(), t.label())
 			return
 		}
 		t = xt
@@ -148,7 +174,11 @@ func (r *run) typed(n *node, t *xtype, decl *elemDecl) {
 		switch {
 		case !valid:
 			r.fail(n, "xsi:nil=%q is not a boolean", v)
-		case b && (decl == nil || !decl.nillable):
+		case decl != nil && !decl.nillable:
+			// on an element that is not nillable xsi:nil may not appear,
+			// even as false
+			r.fail(n, "xsi:nil is set but %s is not nillable", n.display())
+		case b && decl == nil:
 			r.fail(n, "xsi:nil is set but %s is not nillable", n.display())
 		case b:
 			nilled = true
@@ -189,8 +219,13 @@ func (r *run) typed(n *node, t *xtype, decl *elemDecl) {
 	if !t.mixed && strings.TrimSpace(text) != "" {
 		r.report(n, IssueCharacters, "%s may not contain character data", n.display())
 	}
-	if decl != nil && decl.fixed != nil && t.mixed && len(n.children) == 0 && text != "" && text != *decl.fixed {
-		r.fail(n, "%s must have the fixed value %q", n.display(), *decl.fixed)
+	if decl != nil && decl.fixed != nil && t.mixed {
+		switch {
+		case len(n.children) > 0:
+			r.fail(n, "%s has a fixed value and may not contain elements", n.display())
+		case text != "" && text != *decl.fixed:
+			r.fail(n, "%s must have the fixed value %q", n.display(), *decl.fixed)
+		}
 	}
 	if r.opt.Opaque != nil && r.el[n] != nil && r.opt.Opaque(r.el[n]) {
 		return
@@ -226,7 +261,10 @@ func (r *run) value(n *node, t *xtype, text string, decl *elemDecl) {
 	}
 	if decl != nil && decl.fixed != nil {
 		fv, _ := r.s.checkSimple(t, *decl.fixed, n)
-		if fv != v {
+		// equal in the value space ("1" and "true" are one boolean)
+		k1, ok1 := r.s.valueKey(t, text, n)
+		k2, ok2 := r.s.valueKey(t, *decl.fixed, n)
+		if ok1 && ok2 && k1 != k2 || !(ok1 && ok2) && fv != v {
 			r.fail(n, "value %q differs from the fixed value %q", clip(v), fv)
 		}
 	}
@@ -281,6 +319,7 @@ func (r *run) track(n *node, t *xtype, v string) {
 
 func (r *run) attributes(n *node, t *xtype) {
 	have := map[qname]bool{}
+	ids := 0 // attributes of type ID
 	for _, a := range n.attrs {
 		if a.name.Space == nsXSI {
 			switch a.name.Local {
@@ -300,6 +339,9 @@ func (r *run) attributes(n *node, t *xtype) {
 				}
 			}
 		}
+		if use != nil && use.prohibited {
+			use = nil // a prohibited use declares nothing
+		}
 		if use != nil {
 			fixed := use.fixed
 			if fixed == nil {
@@ -309,6 +351,9 @@ func (r *run) attributes(n *node, t *xtype) {
 				fixed = nil
 			}
 			r.attrValue(n, a, use.decl, fixed)
+			if isID(use.decl.typ) {
+				ids++
+			}
 			continue
 		}
 		var wc *wildcard
@@ -338,16 +383,33 @@ func (r *run) attributes(n *node, t *xtype) {
 			continue
 		}
 		r.attrValue(n, a, d, d.fixed)
+		if isID(d.typ) {
+			ids++
+		}
+	}
+	if ids > 1 {
+		r.report(n, IssueAttribute, "%s has more than one attribute of type ID", n.display())
 	}
 	if t == nil {
 		return
 	}
 	for _, u := range t.attrs {
-		if u.required && !have[u.decl.name] {
+		if u.prohibited || have[u.decl.name] {
+			continue
+		}
+		if u.required {
 			if (u.fixed != nil || u.decl.fixed != nil) && r.noFixed(n, u.decl.name) {
 				continue
 			}
 			r.report(n, IssueAttribute, "required attribute %s is missing", u.decl.name.Local)
+			continue
+		}
+		// a default or fixed value supplied for an absent attribute takes
+		// part in ID and IDREF checking like a written one
+		if v, ok := u.supplied(); ok {
+			if nv, why := r.s.checkSimple(u.decl.typ, v, n); why == "" {
+				r.track(n, u.decl.typ, nv)
+			}
 		}
 	}
 }
@@ -994,7 +1056,7 @@ func (w *walker) walkOne(p *particle, pos int) ([]int, bool) {
 		for at < len(names) {
 			hit := false
 			for i, it := range p.items {
-				if !used[i] && leafMatches(it, names[at]) {
+				if !used[i] && it.max != 0 && leafMatches(it, names[at]) {
 					used[i], hit = true, true
 					break
 				}

@@ -312,21 +312,19 @@ func TestNilAndIDs(t *testing.T) {
 func TestLoadRefusesUnsupported(t *testing.T) {
 	head := `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:t="urn:t" targetNamespace="urn:t" elementFormDefault="qualified">`
 	cases := map[string]string{
-		"redefine":        `<xs:redefine schemaLocation="x.xsd"/>`,
-		"identity path":   `<xs:element name="e"><xs:complexType/><xs:key name="k"><xs:selector xpath="../x"/><xs:field xpath="@a"/></xs:key></xs:element>`,
-		"keyref refer":    `<xs:element name="e"><xs:complexType/><xs:keyref name="k" refer="t:none"><xs:selector xpath="."/><xs:field xpath="@a"/></xs:keyref></xs:element>`,
-		"undefined type":  `<xs:element name="e" type="t:Nope"/>`,
-		"undefined ref":   `<xs:complexType name="c"><xs:sequence><xs:element ref="t:nope"/></xs:sequence></xs:complexType>`,
-		"block escape":    `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:pattern value="\p{IsKlingon}+"/></xs:restriction></xs:simpleType>`,
-		"nested class":    `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:pattern value="[a-[b]c]"/></xs:restriction></xs:simpleType>`,
-		"string range":    `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:minInclusive value="a"/></xs:restriction></xs:simpleType>`,
-		"unknown facet":   `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:assertion test="true()"/></xs:restriction></xs:simpleType>`,
-		"xsd 1.1":         `<xs:defaultOpenContent><xs:any/></xs:defaultOpenContent>`,
-		"missing include": `<xs:include schemaLocation="absent.xsd"/>`,
-		"remote import":   `<xs:import namespace="urn:far" schemaLocation="http://example.com/far.xsd"/>`,
-		"escape outside":  `<xs:include schemaLocation="../up.xsd"/>`,
-		"circular type":   `<xs:complexType name="a"><xs:complexContent><xs:extension base="t:b"/></xs:complexContent></xs:complexType><xs:complexType name="b"><xs:complexContent><xs:extension base="t:a"/></xs:complexContent></xs:complexType>`,
-		"duplicate":       `<xs:element name="e"/><xs:element name="e"/>`,
+		"identity path":  `<xs:element name="e"><xs:complexType/><xs:key name="k"><xs:selector xpath="../x"/><xs:field xpath="@a"/></xs:key></xs:element>`,
+		"keyref refer":   `<xs:element name="e"><xs:complexType/><xs:keyref name="k" refer="t:none"><xs:selector xpath="."/><xs:field xpath="@a"/></xs:keyref></xs:element>`,
+		"undefined type": `<xs:element name="e" type="t:Nope"/>`,
+		"undefined ref":  `<xs:complexType name="c"><xs:sequence><xs:element ref="t:nope"/></xs:sequence></xs:complexType>`,
+		"block escape":   `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:pattern value="\p{IsKlingon}+"/></xs:restriction></xs:simpleType>`,
+		"nested class":   `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:pattern value="[a-[b]c]"/></xs:restriction></xs:simpleType>`,
+		"string range":   `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:minInclusive value="a"/></xs:restriction></xs:simpleType>`,
+		"unknown facet":  `<xs:simpleType name="s"><xs:restriction base="xs:string"><xs:assertion test="true()"/></xs:restriction></xs:simpleType>`,
+		"xsd 1.1":        `<xs:defaultOpenContent><xs:any/></xs:defaultOpenContent>`,
+		"remote import":  `<xs:import namespace="urn:far" schemaLocation="http://example.com/far.xsd"/><xs:element name="e" xmlns:f="urn:far" type="f:x"/>`,
+		"escape outside": `<xs:include schemaLocation="../up.xsd"/>`,
+		"circular type":  `<xs:complexType name="a"><xs:complexContent><xs:extension base="t:b"/></xs:complexContent></xs:complexType><xs:complexType name="b"><xs:complexContent><xs:extension base="t:a"/></xs:complexContent></xs:complexType>`,
+		"duplicate":      `<xs:element name="e"/><xs:element name="e"/>`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

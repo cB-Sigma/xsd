@@ -138,6 +138,7 @@ func parseDoc(b []byte, lim Limits, strict bool) (*node, []Issue, error) {
 	}
 	// encoding/xml does not skip a UTF-8 byte order mark itself
 	b = bytes.TrimPrefix(b, []byte("\uFEFF"))
+	b = asXML10(b)
 	d := xml.NewDecoder(bytes.NewReader(b))
 	d.Strict = true
 	d.CharsetReader = charsetReader
@@ -260,6 +261,27 @@ func parseDoc(b []byte, lim Limits, strict bool) (*node, []Issue, error) {
 	}
 	return root, warn, nil
 }
+
+// asXML10 lets an XML 1.1 document be read by encoding/xml, which knows
+// only XML 1.0: the version in the declaration is rewritten. What XML 1.1
+// adds beyond that (NEL line ends, more name characters, C0 controls by
+// reference) is read as XML 1.0 reads it.
+func asXML10(b []byte) []byte {
+	i := bytes.Index(b, []byte("?>"))
+	if !bytes.HasPrefix(bytes.TrimLeft(b, " \t\r\n"), []byte("<?xml")) || i < 0 {
+		return b
+	}
+	decl := b[:i]
+	m := reXML11.FindIndex(decl)
+	if m == nil {
+		return b
+	}
+	out := append([]byte(nil), b...)
+	out[m[1]-2] = '0' // "1.1" -> "1.0", the quote follows
+	return out
+}
+
+var reXML11 = regexp.MustCompile(`version[ \t\r\n]*=[ \t\r\n]*["']1\.1["']`)
 
 // onlySpace reports whether b holds XML white space only.
 func onlySpace(b []byte) bool {

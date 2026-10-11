@@ -153,6 +153,7 @@ func (r *row) total() tally {
 // outcome is what happened to one test.
 type outcome struct {
 	id     string
+	docs   string // the schema documents, then the instance, for XSTS_DUMP
 	ok     bool
 	reason string
 }
@@ -277,7 +278,40 @@ func TestXSTS(t *testing.T) {
 	}
 	t.Log("most common failure reasons:\n" + rb.String())
 
+	if dump := os.Getenv("XSTS_DUMP"); dump != "" {
+		// every failure with its documents, for looking into causes
+		var db strings.Builder
+		for _, o := range results {
+			if !o.ok {
+				db.WriteString(o.id + "\t" + o.reason + "\t" + o.docs + "\n")
+			}
+		}
+		if err := os.WriteFile(dump, []byte(db.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	checkKnown(t, results)
+}
+
+// TestXSTSLoad loads the schema documents named in XSTS_LOAD (paths in
+// the suite, separated by spaces) and validates XSTS_DOC against them if
+// set, printing the full outcome: for looking into one test.
+func TestXSTSLoad(t *testing.T) {
+	dir, docs := os.Getenv("XSTS_DIR"), strings.Fields(os.Getenv("XSTS_LOAD"))
+	if dir == "" || len(docs) == 0 {
+		t.Skip("XSTS_DIR and XSTS_LOAD are not set")
+	}
+	fsys := os.DirFS(dir)
+	s, err := load(fsys, docs)
+	t.Logf("load: %v", err)
+	if doc := os.Getenv("XSTS_DOC"); doc != "" && err == nil {
+		raw, err := fs.ReadFile(fsys, doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("validate: %v", validate(s, raw))
+	}
 }
 
 // runGroup runs a group's schema test and instance tests.
@@ -285,11 +319,13 @@ func runGroup(fsys fs.FS, base, setName string, g *testGroup, r *row) []outcome 
 	var out []outcome
 	var schema *xsd.Schema
 	var loadErr error
+	var schemaDocs []string
 	if g.Schema != nil {
 		docs := g.Schema.docs()
 		for i := range docs {
 			docs[i] = path.Join(base, docs[i])
 		}
+		schemaDocs = docs
 		schema, loadErr = load(fsys, docs)
 		c := g.Schema
 		id := setName + "/" + g.Name + "/" + c.Name
@@ -307,7 +343,7 @@ func runGroup(fsys fs.FS, base, setName string, g *testGroup, r *row) []outcome 
 				}
 			}
 			r.add("schema", exp, ok)
-			out = append(out, outcome{id, ok, reason})
+			out = append(out, outcome{id, strings.Join(docs, " "), ok, reason})
 		}
 	}
 	for i := range g.Instances {
@@ -348,7 +384,7 @@ func runGroup(fsys fs.FS, base, setName string, g *testGroup, r *row) []outcome 
 			}
 		}
 		r.add("instance", exp, ok)
-		out = append(out, outcome{id, ok, reason})
+		out = append(out, outcome{id, strings.Join(append(schemaDocs, path.Join(base, docs[0])), " "), ok, reason})
 	}
 	return out
 }
@@ -375,10 +411,15 @@ func load(fsys fs.FS, docs []string) (s *xsd.Schema, err error) {
 			s, err = nil, fmt.Errorf("PANIC: %v", p)
 		}
 	}()
-	if len(docs) == 1 {
-		return xsd.Load(fsys, docs[0])
+	var opt xsd.LoadOptions
+	if dir := os.Getenv("XSTS_FETCH_DIR"); dir != "" {
+		// local copies of documents the suite imports by URL (the XLink
+		// schema the introspection tests import), by base name
+		opt.Fetch = func(u string) ([]byte, error) {
+			return os.ReadFile(filepath.Join(dir, path.Base(u)))
+		}
 	}
-	return xsd.LoadFiles(fsys, docs...)
+	return xsd.LoadWith(fsys, opt, docs...)
 }
 
 func validate(s *xsd.Schema, doc []byte) (err error) {

@@ -4,8 +4,9 @@ W3C XML Schema 1.0 validation in pure Go, with the standard library only.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/cB-Sigma/xsd.svg)](https://pkg.go.dev/github.com/cB-Sigma/xsd) [![test](https://github.com/cB-Sigma/xsd/actions/workflows/test.yml/badge.svg)](https://github.com/cB-Sigma/xsd/actions/workflows/test.yml) [![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE) [![Go](https://img.shields.io/badge/go-1.24-00ADD8.svg)](go.mod)
 
-Load a schema set from a file system or a zip, following `xs:include` and
-`xs:import`, and validate documents against it: content models, all the
+Load a schema set from a file system or a zip, following `xs:include`,
+`xs:import` and `xs:redefine` and checking the schema's own correctness,
+and validate documents against it: content models, all the
 XSD 1.0 built-in datatypes and facets, identity constraints, and hooks for
 vocabularies that have their own extension rules. Parsing is bounded for
 documents from untrusted peers. No cgo. Written for SigmaM2M, a oneM2M
@@ -21,16 +22,17 @@ payloads and OpenADR 2.0 messages.
 | Wildcards (`xs:any`, `xs:anyAttribute`) with strict, lax and skip processing | yes |
 | Simple types by restriction (every XSD 1.0 facet), list and union; all XSD 1.0 built-in datatypes; range facets on numbers, dates, times, the partial dates (`gYear` ...) and durations | yes |
 | Regular expressions: XSD syntax translated to RE2, with the Unicode 3.1 block escapes and class subtraction | yes |
-| `xsi:type`, `xsi:nil`, ID and IDREF | yes |
+| `xsi:type`, `xsi:nil`, `block` and `final` (on substitution and `xsi:type`), ID and IDREF | yes |
 | Identity constraints (`unique`, `key`, `keyref`) with the XSD 1.0 XPath subset, compared in the value space | yes |
-| `xs:include` (chameleon includes too) and `xs:import` within the given file system; several root documents (`LoadFiles`) | yes |
-| Unique Particle Attribution checked when a schema loads | yes |
+| `xs:include` (chameleon includes too), `xs:import` and `xs:redefine` within the given file system; several root documents (`LoadFiles`) | yes |
+| Documents named by URL, read through a caller's `LoadOptions.Fetch` (never by the loader itself), with a bound on fetches | yes |
+| The schema's own correctness checked when it loads: the schema for schema documents, facet rules, component constraints, restriction of complex types (Particle Valid (Restriction)), Element Declarations Consistent, Unique Particle Attribution, the XSD regular expression grammar | yes |
 | Bounded parsing (`Limits`: depth by default; elements, attributes, bytes on request) and a work bound on content-model checking | yes |
 | `ValidateTree`: validate a tree the caller parsed, with hooks for undeclared elements and attributes and extra value checks; graded issues (`IssueKind`) | yes |
-| `xs:redefine` | no: refused at load |
-| Constraints on the schema's own correctness (that a restriction restricts, element declarations consistent, ...) | no: the schema is trusted (see the suite results) |
-| `xsi:schemaLocation` hints, remote imports, DTDs and entities | no |
-| XSD 1.1 (assertions, open content, conditional types, ...) | no: refused at load |
+| XML 1.1 documents | read as XML 1.0 reads them (encoding/xml): the XML 1.1 name and control characters are not |
+| `xsi:schemaLocation` hints | no, by design: the receiver chooses the schema |
+| DTDs and entity declarations in documents | no: a document type declaration is skipped, entities other than the predefined ones are refused |
+| XSD 1.1 (assertions, open content, conditional types, `xs:override`, ...) | no: refused at load |
 
 ## Choosing a Go XML Schema validator
 
@@ -42,19 +44,23 @@ Compared from each project's source at the versions named, in October
 | Engine | own, Go standard library only | own, pure Go | libxml2 through cgo | libxml2 through cgo |
 | Builds with `CGO_ENABLED=0` | yes | yes | no | no |
 | Minimum Go | 1.24 | 1.26.1 | | |
-| W3C XSD 1.0 test suite | 95.5 % of the XSD 1.0 tests (below) | 14,383 of the 14,399 tests it selects (its README) | libxml2's results | libxml2's results |
-| Checks the schema's own correctness | partly (UPA, references, cycles) | yes | yes | yes |
-| `xs:redefine` | no | yes | yes | yes |
+| W3C XSD 1.0 test suite | 99.6 % of all 39,336 XSD 1.0 tests (below) | 14,383 of the 14,399 tests it selects (its README) | libxml2's results | libxml2's results |
+| Checks the schema's own correctness | yes | yes | yes | yes |
+| `xs:redefine` | yes | yes | yes | yes |
 | Hooks for vocabulary extension rules on a parsed tree | yes (`ValidateTree`) | no | no | no |
 | DTD entities in documents | no | yes, with an expansion cap | yes | yes |
-| Size of a minimal validating program (stripped; our measurement) | 2.7 MB | 14.5 MB | not measured | not measured |
+| Size of a minimal validating program (stripped, darwin/arm64; our measurement) | 3.0 MB (2.7 MB at v0.1.0) | 14.5 MB | not measured | not measured |
+
+The test-suite rows are not comparable as they stand: helium runs the
+tests it selects, this module every test that applies to XSD 1.0.
 
 Pick this module when you want a small, cgo-free validator with no
-dependencies for schema sets you trust, especially when a vocabulary
-needs its own extension hooks (IEC 61850 SCL is one). Pick helium when you
-also need the schema itself checked, `xs:redefine` or DTD entities, and
-can use Go 1.26. Pick a libxml2 binding when cgo is fine and you want the
-reference behaviour most other tools share.
+dependencies, especially when a vocabulary needs its own extension hooks
+(IEC 61850 SCL is one). Pick helium when you need DTD entities in
+documents and can use Go 1.26. Pick a libxml2 binding when cgo is fine
+and you want the reference behaviour most other tools share. None of
+these, nor this module, does XSD 1.1: for assertions and the rest of
+1.1, Xerces-J or Saxon-EE (Java) are the options.
 
 ## Install
 
@@ -86,7 +92,7 @@ API reference: https://pkg.go.dev/github.com/cB-Sigma/xsd
 
 | Package | What it does |
 |---|---|
-| `xsd` (module root) | `Load`, `LoadFiles`, `LoadZip`; `Schema.Validate`, `ValidateDoc` (warnings, `DocOptions`), `ValidateLimits`, `ValidateTree` with `Options` hooks; `LoadWarnings`, `CheckValue`, `SimpleTypes` |
+| `xsd` (module root) | `Load`, `LoadFiles`, `LoadWith` (`LoadOptions`: `Fetch`, `MaxFetches`), `LoadZip`; `Schema.Validate`, `ValidateDoc` (warnings, `DocOptions`), `ValidateLimits`, `ValidateTree` with `Options` hooks; `LoadWarnings`, `CheckValue`, `SimpleTypes` |
 | `xsts` (nested module, tests only) | runs the W3C XML Schema Test Suite against this module |
 
 Limits: documents often come from untrusted peers. By default a document
@@ -96,7 +102,14 @@ elements, attributes per element and bytes on request. Checking one
 element's children against its content model has a work bound; past it
 the element gets an `IssueLimit` issue instead of a verdict.
 
-Documents must be well-formed XML 1.0. White space before the XML
+Schemas are checked for their own correctness when they load, which
+costs time in proportion to the schema; it stays bounded for schemas
+from untrusted sources (the restriction check compares particles pairwise,
+the Unique Particle Attribution check has position and link bounds),
+and `LoadOptions.MaxFetches` bounds what one load fetches.
+
+Documents must be well-formed XML 1.0 (an XML 1.1 declaration is read
+as XML 1.0). White space before the XML
 declaration is accepted with an `IssueLeadingSpace` warning unless
 `DocOptions.StrictProlog` is set.
 
@@ -130,37 +143,57 @@ disputed tests, and instance tests that rely on `xsi:schemaLocation`, are
 skipped (183). A schema test passes when loading succeeds or fails as
 expected, an instance test when validation does. The test fails on any
 change from `xsts/testdata/known-failures.txt`: a new failure, or a
-listed test that now passes. Results on 2026-10-11, xsdtests master:
+listed test that now passes. `XSTS_DUMP=file` writes every failure with
+its documents; `XSTS_LOAD` and `XSTS_DOC` with `-run TestXSTSLoad` show
+one test's full outcome. Results on 2026-10-11, xsdtests master (v0.1.0's
+in brackets):
 
 | Contributor | Schema tests, valid | Schema tests, invalid | Instance tests, valid | Instance tests, invalid | Total |
 |---|---|---|---|---|---|
-| NIST (datatypes) | 3,953/3,953 | – | 10,608/10,609 | 8,608/8,608 | 23,169/23,170 |
-| Microsoft | 6,397/6,487 | 1,962/3,168 | 2,674/2,720 | 1,831/1,908 | 12,864/14,283 |
-| Sun | 524/533 | 48/144 | 515/538 | 335/379 | 1,422/1,594 |
-| Boeing | 5/6 | – | 10/12 | – | 15/18 |
-| XSD 1.0 tests in the Saxonica and IBM sets | 32/52 | 15/23 | 17/45 | 38/59 | 102/179 |
-| Suite metadata (introspection) | 0/1 | – | 0/91 | – | 0/92 |
-| **All** | **10,911/11,032** | **2,025/3,335** | **13,824/14,015** | **10,812/10,954** | **37,572/39,336 (95.5 %)** |
+| NIST (datatypes) | 3,953/3,953 | – | 10,608/10,609 | 8,608/8,608 | 23,169/23,170 (23,169) |
+| Microsoft | 6,484/6,487 | 3,165/3,168 | 2,710/2,720 | 1,899/1,908 | 14,258/14,283 (12,864) |
+| Sun | 533/533 | 144/144 | 534/538 | 379/379 | 1,590/1,594 (1,422) |
+| Boeing | 6/6 | – | 12/12 | – | 18/18 (15) |
+| XSD 1.0 tests in the Saxonica and IBM sets | 39/52 | 23/23 | 29/45 | 47/59 | 138/179 (102) |
+| Suite metadata (introspection) | 0/1 | – | 0/91 | – | 0/92 (0) |
+| **All** | **11,015/11,032** | **3,332/3,335** | **13,893/14,015** | **10,933/10,954** | **39,173/39,336, 99.6 % (37,572, 95.5 %)** |
 
-The 1,764 failures, by cause (each is listed with its reason in
+The 163 failures, by cause (each is listed with its reason in
 `known-failures.txt`):
 
-- 1,310 schemas that XSD 1.0 calls invalid load here: the schema's own
-  correctness is not checked.
-- 198 instance tests whose schema does not load, most of them through
-  the next two causes.
-- 61 schemas use `xs:redefine`; the introspection set imports XLink from
-  a URL, and remote imports are not fetched.
-- 99 invalid documents accepted, and the rest valid documents or schemas
-  refused: wildcards, `xsi:type`, identity constraints, name characters,
-  XML 1.1 documents and a few others.
+- 92 introspection tests: their schema imports XLink from a URL that is
+  not part of the suite. `LoadOptions.Fetch` reads such documents
+  (`XSTS_FETCH_DIR` hands the harness a folder of local copies); the run
+  above had none.
+- 22 tests in the IBM and Saxonica sets that carry no version marking but
+  use XSD 1.1 (`notQName`, `notNamespace`, assertions, `xs:error`), which
+  this module refuses.
+- 12 Saxonica tests of schemas with references that never resolve to
+  components no document uses; this module refuses such a schema.
+- 7 XML 1.1 documents with characters encoding/xml refuses or accepts as
+  XML 1.0 does.
+- 30 others: 4 strict wildcards met only through `xsi:schemaLocation`
+  hints; 5 instance tests whose schema is refused (an attribute group
+  redefined twice, a circular union the suite queries, a local type that
+  restricts the type it is declared in); 2 restrictions that only narrow
+  their base but that the letter of Particle Valid (Restriction) refuses,
+  accepted here; a child matched by an element declaration where the
+  content model's path gives it to a wildcard; the content-model work
+  bound reached on purpose; and single cases of identity constraints,
+  `QName` values, fixed values, prohibited attributes and lists of huge
+  doubles.
 
-Running the suite found and fixed: content-model checking that took
-minutes on a document with about 2,000 children (now remembered per
+v0.1.0 accepted 1,310 invalid schemas and 99 invalid documents. v0.2.0
+checks the schema's own correctness (the schema for schema documents,
+facets, components, restriction, regular expression syntax), supports
+`xs:redefine`, applies blocks in documents and fixes the other causes;
+3 invalid schemas and 7 invalid documents are still accepted (above).
+
+Running the suite found and fixed, in v0.1.0: content-model checking that
+took minutes on a document with about 2,000 children (now remembered per
 position, with a work bound); range facets on the partial date types and
-durations, class subtraction and most Unicode block escapes in patterns
-(all refused before); one schema from several root documents
-(`LoadFiles`).
+durations, class subtraction and most Unicode block escapes in patterns;
+one schema from several root documents (`LoadFiles`).
 
 ### Interop tested against
 

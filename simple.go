@@ -36,10 +36,12 @@ type facetSet struct {
 	length, minLength, maxLength       int // -1 when absent
 	totalDigits, fractionDigits        int // -1 when absent
 	minIncl, maxIncl, minExcl, maxExcl string
+	ws                                 int             // whiteSpace, -1 when absent
+	fixed                              map[string]bool // facets declared fixed="true"
 }
 
 func newFacetSet() *facetSet {
-	return &facetSet{length: -1, minLength: -1, maxLength: -1, totalDigits: -1, fractionDigits: -1}
+	return &facetSet{length: -1, minLength: -1, maxLength: -1, totalDigits: -1, fractionDigits: -1, ws: -1}
 }
 
 // builtinBase is the derivation tree of the built-in types.
@@ -121,9 +123,9 @@ var (
 	reDecimal  = regexp.MustCompile(`^[+-]?(\d+(\.\d*)?|\.\d+)$`)
 	reInteger  = regexp.MustCompile(`^[+-]?\d+$`)
 	reFloat    = regexp.MustCompile(`^([+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?|-?INF|NaN)$`)
-	reName     = regexp.MustCompile(`^[` + nameStart + `][` + nameChar + `]*$`)
-	reNCName   = regexp.MustCompile(`^[\p{L}\p{Nl}_][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Lm}._\-\x{B7}]*$`)
-	reNMTOKEN  = regexp.MustCompile(`^[` + nameChar + `]+$`)
+	reName     = regexp.MustCompile(`^[:` + xmlNameStart + `][:` + xmlNameChar + `]*$`)
+	reNCName   = regexp.MustCompile(`^[` + xmlNameStart + `][` + xmlNameChar + `]*$`)
+	reNMTOKEN  = regexp.MustCompile(`^[:` + xmlNameChar + `]+$`)
 	reLanguage = regexp.MustCompile(`^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$`)
 	reDuration = regexp.MustCompile(`^-?P(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$`)
 	reHex      = regexp.MustCompile(`^([0-9a-fA-F]{2})*$`)
@@ -135,7 +137,16 @@ var (
 	reGYear    = regexp.MustCompile(`^(-?\d{4,})` + tz + `$`)
 	reGMD      = regexp.MustCompile(`^--(\d{2})-(\d{2})` + tz + `$`)
 	reGDay     = regexp.MustCompile(`^---(\d{2})` + tz + `$`)
-	reGMonth   = regexp.MustCompile(`^--(\d{2})(--)?` + tz + `$`)
+	reGMonth   = regexp.MustCompile(`^--(\d{2})()` + tz + `$`) // --MM only (the --MM-- form was withdrawn by an erratum)
+)
+
+// Name characters as XML 1.0 (fifth edition) defines them, without the
+// colon: the ranges of NameStartChar and NameChar. Earlier editions listed
+// characters by Unicode 2.0 class; the fifth edition's ranges admit every
+// name those editions admitted.
+const (
+	xmlNameStart = `A-Z_a-z\x{C0}-\x{D6}\x{D8}-\x{F6}\x{F8}-\x{2FF}\x{370}-\x{37D}\x{37F}-\x{1FFF}\x{200C}-\x{200D}\x{2070}-\x{218F}\x{2C00}-\x{2FEF}\x{3001}-\x{D7FF}\x{F900}-\x{FDCF}\x{FDF0}-\x{FFFD}\x{10000}-\x{EFFFF}`
+	xmlNameChar  = xmlNameStart + `\-.0-9\x{B7}\x{300}-\x{36F}\x{203F}-\x{2040}`
 )
 
 func isNCName(s string) bool { return reNCName.MatchString(s) }
@@ -592,8 +603,9 @@ func (s *Schema) checkSimple(t *xtype, raw string, ctx *node) (string, string) {
 		v = collapse(raw)
 		ok := false
 		for _, m := range t.members {
-			if _, why := s.checkSimple(m, raw, ctx); why == "" {
-				ok = true
+			if mv, why := s.checkSimple(m, raw, ctx); why == "" {
+				// the value as the member type that accepts it reads it
+				ok, v = true, mv
 				break
 			}
 		}

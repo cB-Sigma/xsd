@@ -19,6 +19,15 @@ content-model checking with a work bound, range facets on the partial date
 types and durations, class subtraction and the full Unicode 3.1 block
 list in patterns, and `LoadFiles`.
 
+v0.2.0 (2026-10-11) added, from the same recommendations and their
+published errata: checking of the schema's own correctness (the schema
+for schema documents written as our own tables, the facet and component
+constraints, Particle Valid (Restriction)), `xs:redefine`, blocking in
+documents, attribute wildcard union and intersection, `LoadWith` with a
+caller's fetcher, and the fixes the W3C suite pointed to. The suite's
+failure lists guided which constraints to check first; the code follows
+the recommendations' text, not another implementation.
+
 ## Sources
 
 | Area (files) | Followed |
@@ -30,6 +39,13 @@ list in patterns, and `LoadFiles`.
 | Simple types and facets (simple.go) | XSD 1.0 Part 2 (built-in datatypes, facets; the order of durations by the four reference dateTimes of 3.2.6.2) |
 | Regular expressions (regex.go, regexclass.go) | XSD 1.0 Part 2 appendix F, translated to RE2; block ranges from the Unicode Character Database's Blocks.txt for Unicode 3.1, as facts |
 | Identity constraints (idc.go) | XSD 1.0 Part 1 section 3.11 and its XPath subset |
+| Schema for schema documents (s4s.go) | XSD 1.0 Part 1, the XML representation of each component and the schema for schema documents (appendix A), restated as our own tables; no part of the schema document is copied |
+| Facet rules (facetrules.go) | XSD 1.0 Part 2, the constraints on each facet |
+| Component constraints (components.go) | XSD 1.0 Part 1, the schema component constraints of element, attribute, type, attribute use, model group and notation components |
+| Restriction of complex types (restrict.go) | XSD 1.0 Part 1, Derivation Valid (Restriction, Complex) and Particle Valid (Restriction) with its cases; Wildcard Subset, Union and Intersection as amended by erratum E1-10 |
+| Redefinition (redefine.go) | XSD 1.0 Part 1, 4.2.2 |
+| Documents by URL (fetch.go) | Our own design; RFC 3986 reference resolution through net/url |
+| XML names (simple.go, regexclass.go) | XML 1.0 fifth edition, NameStartChar and NameChar, as facts |
 
 ## Test data
 

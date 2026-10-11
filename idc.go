@@ -1,6 +1,7 @@
 package xsd
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -106,6 +107,8 @@ func (e xpathError) Error() string { return string(e) }
 
 // parseXPath reads a selector or field expression.
 func parseXPath(ctx *node, expr string, field bool) ([]xpath, error) {
+	// white space may stand between tokens: drop it around the operators
+	expr = reXPathSpace.ReplaceAllString(expr, "$1")
 	var out []xpath
 	for _, alt := range strings.Split(expr, "|") {
 		p := strings.TrimSpace(alt)
@@ -143,6 +146,8 @@ func parseXPath(ctx *node, expr string, field bool) ([]xpath, error) {
 	}
 	return out, nil
 }
+
+var reXPathSpace = regexp.MustCompile(`[ \t\r\n]*(::|//|/|\||@)[ \t\r\n]*`)
 
 func quoteXP(s string) string { return `"` + strings.TrimSpace(s) + `"` }
 
@@ -343,6 +348,10 @@ func (r *run) tuple(x *node, c *idc) (key, shown string, ok bool) {
 		for _, p := range f {
 			if p.attr == nil {
 				for _, e := range r.walkPath(x, p) {
+					if t := r.types[e]; t != nil && t.complex && t.simpleContent == nil {
+						r.report(x, IssueIdentity, "field %s of %s selects %s, whose type has no simple value", c.src[i], c.name.Local, e.display())
+						return "", "", false
+					}
 					got = append(got, r.elementValue(e))
 				}
 				continue

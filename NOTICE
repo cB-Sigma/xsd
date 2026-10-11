@@ -1,0 +1,46 @@
+xsd (W3C XML Schema 1.0 validation, in Go)
+Copyright 2026 Abhinav Gautam
+
+This module is licensed under the Apache License, Version 2.0 (LICENSE).
+
+The code was written for SigmaM2M from the W3C XML Schema 1.0
+recommendations listed in PROVENANCE.md. It contains no code from other
+projects. The source files that come from SigmaM2M carry no per-file
+copyright header (the convention of the code they come from); the
+copyright line above covers them. Files added for this module carry
+"Copyright 2026 Abhinav Gautam" and "SPDX-License-Identifier: Apache-2.0".
+
+Specifications and data
+-----------------------
+
+W3C XML Schema 1.0 (Part 1: Structures, Part 2: Datatypes, Second
+Edition) and XML Path Language 1.0 are W3C recommendations; their
+structure and rules are implemented in our own words and code. No text is
+reproduced.
+
+The Unicode block ranges in regex.go are facts taken from the Unicode
+Character Database (Blocks.txt, Unicode 3.1), Copyright Unicode, Inc.,
+under the Unicode License.
+
+Dependencies
+------------
+
+- The Go standard library (BSD-3-Clause, Copyright The Go Authors).
+
+Test data
+---------
+
+The schemas and documents under testdata/ and in the tests are written
+for these tests. Two tests read schemas that are not part of this module
+and are skipped without them: the IEC 61850-6 SCL schema code component
+(IEC code component licence; XSD_TEST_SCL_DIR) and the OpenADR 2.0
+schemas (not redistributable; SIGMA_TEST_OPENADR_XSD_DIR).
+
+The test-only nested module xsts/ runs the W3C XML Schema Test Suite
+(https://github.com/w3c/xsdtests, Copyright World Wide Web Consortium,
+under the W3C Document License) from a checkout the user supplies. No file
+of the suite is included; xsts/testdata/known-failures.txt names the
+suite's tests that fail here, with our own reasons. The suite's
+contributors are NIST, Sun Microsystems, Microsoft, Boeing, Saxonica, IBM
+and Oracle. W3C is a trademark of the World Wide Web Consortium; this
+module is not endorsed by W3C.

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test schema written for SigmaM2M's XSD validator tests. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:m="urn:sigma:test:main" xmlns:o="urn:sigma:test:other"
+           targetNamespace="urn:sigma:test:main" elementFormDefault="qualified">
+  <xs:include schemaLocation="parts.xsd"/>
+  <xs:import namespace="urn:sigma:test:other" schemaLocation="sub/other.xsd"/>
+
+  <xs:element name="library" type="m:Library"/>
+  <xs:complexType name="Library">
+    <xs:sequence>
+      <xs:element ref="m:item" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="note" type="m:Note" minOccurs="0" maxOccurs="2"/>
+      <!-- o:tag is required: were it optional, an o:tag could match it or
+           the wildcard after it (Unique Particle Attribution) -->
+      <xs:element ref="o:tag"/>
+      <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attributeGroup ref="m:common"/>
+    <xs:attribute name="owner" type="xs:NCName" use="required"/>
+  </xs:complexType>
+
+  <!-- substitution group with an abstract head -->
+  <xs:element name="item" type="m:Item" abstract="true"/>
+  <xs:element name="book" type="m:Book" substitutionGroup="m:item"/>
+  <xs:element name="ebook" type="m:EBook" substitutionGroup="m:book"/>
+  <xs:element name="disc" substitutionGroup="m:item"/>
+  <xs:complexType name="Item" abstract="false">
+    <xs:sequence>
+      <xs:element name="title" type="m:Title"/>
+    </xs:sequence>
+    <xs:attribute name="id" type="xs:ID" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Book">
+    <xs:complexContent>
+      <xs:extension base="m:Item">
+        <xs:sequence>
+          <xs:choice>
+            <xs:element name="isbn" type="m:ISBN"/>
+            <xs:element name="issn" type="xs:token"/>
+          </xs:choice>
+          <xs:element name="pages" type="m:Pages" minOccurs="0"/>
+          <xs:element name="authors" type="m:Names" minOccurs="0"/>
+          <xs:group ref="m:extra" minOccurs="0"/>
+          <xs:element name="price" type="m:Price" minOccurs="0" nillable="true"/>
+          <xs:element name="meta" type="m:Meta" minOccurs="0"/>
+          <xs:element name="shape" type="m:Shape" minOccurs="0"/>
+          <xs:element name="lent" type="m:Lent" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="lang" type="xs:language"/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="EBook">
+    <xs:complexContent>
+      <xs:restriction base="m:Book">
+        <xs:sequence>
+          <xs:element name="title" type="m:Title"/>
+          <xs:element name="isbn" type="m:ISBN"/>
+        </xs:sequence>
+        <xs:attribute name="lang" use="prohibited"/>
+      </xs:restriction>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:group name="extra">
+    <xs:sequence>
+      <xs:element name="edition" type="xs:positiveInteger"/>
+      <xs:element name="year" type="xs:gYear" minOccurs="0"/>
+    </xs:sequence>
+  </xs:group>
+
+  <!-- simple content by extension and by restriction -->
+  <xs:complexType name="Title">
+    <xs:simpleContent>
+      <xs:extension base="m:ShortText">
+        <xs:attribute name="script" type="xs:token" default="latin"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="Price">
+    <xs:simpleContent>
+      <xs:extension base="xs:decimal">
+        <xs:attribute name="currency" type="m:Currency" use="required"/>
+        <xs:attribute name="scheme" type="xs:string" fixed="retail"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="SmallTitle">
+    <xs:simpleContent>
+      <xs:restriction base="m:Title">
+        <xs:maxLength value="5"/>
+      </xs:restriction>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:element name="small" type="m:SmallTitle"/>
+
+  <!-- all, empty content and mixed content -->
+  <xs:complexType name="Meta">
+    <xs:all>
+      <xs:element name="created" type="xs:dateTime"/>
+      <xs:element name="size" type="xs:unsignedShort" minOccurs="0"/>
+    </xs:all>
+  </xs:complexType>
+  <xs:complexType name="Note" mixed="true">
+    <xs:sequence>
+      <xs:element name="em" type="xs:string" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Lent">
+    <xs:attribute name="to" type="xs:IDREF" use="required"/>
+    <xs:anyAttribute namespace="##other" processContents="skip"/>
+  </xs:complexType>
+
+  <!-- abstract type, used through xsi:type -->
+  <xs:complexType name="Shape" abstract="true">
+    <xs:attribute name="unit" type="xs:token"/>
+  </xs:complexType>
+  <xs:complexType name="Circle">
+    <xs:complexContent>
+      <xs:extension base="m:Shape">
+        <xs:sequence>
+          <xs:element name="radius" type="xs:double"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="Unrelated">
+    <xs:sequence>
+      <xs:element name="radius" type="xs:double"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- the built-in types, one element each -->
+  <xs:element name="values">
+    <xs:complexType>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="v" type="m:Any"/>
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+  <xs:complexType name="Any">
+    <xs:simpleContent>
+      <xs:extension base="xs:string"/>
+    </xs:simpleContent>
+  </xs:complexType>
+</xs:schema>

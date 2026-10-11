@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!-- Included part of the SigmaM2M validator test schema (declared Latin-1). -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:m="urn:sigma:test:main"
+           targetNamespace="urn:sigma:test:main" elementFormDefault="qualified">
+  <xs:attributeGroup name="common">
+    <xs:attribute name="version" type="m:Version" fixed="1.0"/>
+    <xs:attribute ref="xml:lang"/>
+    <xs:anyAttribute namespace="urn:sigma:test:other ##local" processContents="lax"/>
+  </xs:attributeGroup>
+
+  <xs:simpleType name="Version">
+    <xs:restriction base="xs:token">
+      <xs:pattern value="\d+\.\d+"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="ShortText">
+    <xs:restriction base="xs:string">
+      <xs:minLength value="1"/>
+      <xs:maxLength value="40"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="ISBN">
+    <xs:restriction base="xs:token">
+      <xs:pattern value="97[89]-\d{10}"/>
+      <xs:pattern value="\d{9}[\dX]"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="Pages">
+    <xs:restriction base="xs:integer">
+      <xs:minInclusive value="1"/>
+      <xs:maxExclusive value="10000"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="Currency">
+    <xs:union memberTypes="m:IsoCurrency">
+      <xs:simpleType>
+        <xs:restriction base="xs:token">
+          <xs:pattern value="x-\S+"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:union>
+  </xs:simpleType>
+  <xs:simpleType name="IsoCurrency">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="INR"/>
+      <xs:enumeration value="EUR"/>
+      <xs:enumeration value="USD"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="Names">
+    <xs:restriction>
+      <xs:simpleType>
+        <xs:list itemType="xs:NCName"/>
+      </xs:simpleType>
+      <xs:maxLength value="3"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="Money">
+    <xs:restriction base="xs:decimal">
+      <xs:totalDigits value="6"/>
+      <xs:fractionDigits value="2"/>
+      <xs:minExclusive value="0"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="money" type="m:Money"/>
+  <xs:element name="fixedText" type="xs:token" fixed="same"/>
+</xs:schema>

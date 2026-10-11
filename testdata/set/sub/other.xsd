@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Imported namespace of the SigmaM2M validator test schema (unprefixed XSD style). -->
+<schema xmlns="http://www.w3.org/2001/XMLSchema" xmlns:o="urn:sigma:test:other"
+        targetNamespace="urn:sigma:test:other" elementFormDefault="qualified">
+  <element name="tag" type="o:Tag"/>
+  <complexType name="Tag">
+    <sequence>
+      <any namespace="##any" processContents="skip" minOccurs="0" maxOccurs="unbounded"/>
+    </sequence>
+    <attribute name="k" type="string" use="required"/>
+  </complexType>
+  <element name="strictBox">
+    <complexType>
+      <sequence>
+        <any namespace="urn:sigma:test:main" processContents="strict"/>
+      </sequence>
+    </complexType>
+  </element>
+  <attribute name="flag" type="boolean"/>
+</schema>

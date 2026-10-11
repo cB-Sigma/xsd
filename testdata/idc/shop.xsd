@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Written for the SigmaM2M xsd package tests: identity constraints and hooks. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:s="urn:sigma:test:shop"
+	targetNamespace="urn:sigma:test:shop" elementFormDefault="qualified">
+	<xs:element name="shop">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+				<xs:element name="shelf" type="s:Shelf" maxOccurs="unbounded"/>
+				<xs:element name="order" type="s:Order" minOccurs="0" maxOccurs="unbounded"/>
+				<xs:element name="note" minOccurs="0">
+					<xs:complexType mixed="true">
+						<xs:sequence><xs:any processContents="skip" minOccurs="0" maxOccurs="unbounded"/></xs:sequence>
+					</xs:complexType>
+				</xs:element>
+			</xs:sequence>
+			<xs:attribute name="version" type="xs:string" use="required" fixed="1"/>
+		</xs:complexType>
+		<xs:key name="itemKey">
+			<xs:selector xpath="./s:shelf/s:item"/>
+			<xs:field xpath="@sku"/>
+			<xs:field xpath="@size"/>
+		</xs:key>
+		<xs:keyref name="lineRef" refer="s:itemKey">
+			<xs:selector xpath=".//s:line"/>
+			<xs:field xpath="@sku"/>
+			<xs:field xpath="@size"/>
+		</xs:keyref>
+		<xs:unique name="shelfName">
+			<xs:selector xpath="s:shelf"/>
+			<xs:field xpath="s:label"/>
+		</xs:unique>
+		<xs:unique name="shelfCode">
+			<xs:selector xpath="s:shelf"/>
+			<xs:field xpath="@code"/>
+		</xs:unique>
+		<xs:unique name="aisleKey">
+			<xs:selector xpath="./s:shelf"/>
+			<xs:field xpath="@aisle"/>
+		</xs:unique>
+	</xs:element>
+	<xs:complexType name="Shelf">
+		<xs:sequence>
+			<xs:element name="label" type="xs:string" minOccurs="0" default="Misc"/>
+			<xs:element name="item" maxOccurs="unbounded">
+				<xs:complexType>
+					<xs:attribute name="sku" type="s:Sku"/>
+					<xs:attribute name="size" type="xs:string" default="M"/>
+					<xs:attribute name="uuid" type="xs:string"/>
+				</xs:complexType>
+			</xs:element>
+		</xs:sequence>
+		<xs:attribute name="aisle" type="xs:string"/>
+		<xs:attribute name="code" type="xs:decimal"/>
+	</xs:complexType>
+	<xs:complexType name="Order">
+		<xs:sequence>
+			<xs:element name="line" maxOccurs="unbounded">
+				<xs:complexType>
+					<xs:attribute name="sku" type="s:Sku" use="required"/>
+					<xs:attribute name="size" type="xs:string"/>
+				</xs:complexType>
+			</xs:element>
+		</xs:sequence>
+		<xs:attribute name="aisle" type="xs:string"/>
+	</xs:complexType>
+	<xs:element name="aisles">
+		<xs:complexType>
+			<xs:sequence><xs:element ref="s:shop"/></xs:sequence>
+		</xs:complexType>
+		<xs:keyref name="aisleRef" refer="s:aisleKey">
+			<xs:selector xpath=".//s:order | ./s:shop/s:order"/>
+			<xs:field xpath="@aisle"/>
+		</xs:keyref>
+	</xs:element>
+	<xs:simpleType name="Sku">
+		<xs:restriction base="xs:string"><xs:pattern value="[A-Z]{2}\d{3}"/></xs:restriction>
+	</xs:simpleType>
+</xs:schema>

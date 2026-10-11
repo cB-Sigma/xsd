@@ -1,6 +1,9 @@
 package xsd
 
-// IssueKind classifies an issue.
+import "strconv"
+
+// IssueKind classifies an issue. New kinds may be added in a minor
+// release; callers should treat an unknown kind like IssueOther.
 type IssueKind int
 
 const (
@@ -14,7 +17,30 @@ const (
 	IssueID                     // ID uniqueness, IDREF resolution
 	IssueLimit                  // the document passes a Limits bound and was not validated
 	IssueLeadingSpace           // a warning: white space before the XML declaration (accepted)
+	IssueMalformed              // the document is not well-formed XML and was not validated
 )
+
+var issueKindNames = [...]string{
+	IssueOther:        "IssueOther",
+	IssueRoot:         "IssueRoot",
+	IssueContent:      "IssueContent",
+	IssueCharacters:   "IssueCharacters",
+	IssueAttribute:    "IssueAttribute",
+	IssueValue:        "IssueValue",
+	IssueIdentity:     "IssueIdentity",
+	IssueID:           "IssueID",
+	IssueLimit:        "IssueLimit",
+	IssueLeadingSpace: "IssueLeadingSpace",
+	IssueMalformed:    "IssueMalformed",
+}
+
+// String returns the constant's name, or IssueKind(n) for an unknown kind.
+func (k IssueKind) String() string {
+	if k >= 0 && int(k) < len(issueKindNames) {
+		return issueKindNames[k]
+	}
+	return "IssueKind(" + strconv.Itoa(int(k)) + ")"
+}
 
 // Element is one element of a document the caller has parsed itself.
 type Element struct {

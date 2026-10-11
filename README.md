@@ -130,9 +130,15 @@ the Unique Particle Attribution check has position and link bounds),
 and `LoadOptions.MaxFetches` bounds what one load fetches.
 
 Documents must be well-formed XML 1.0 (an XML 1.1 declaration is read
-as XML 1.0). White space before the XML
+as XML 1.0); a document that is not is refused with one issue of kind
+`IssueMalformed`. White space before the XML
 declaration is accepted with an `IssueLeadingSpace` warning unless
 `DocOptions.StrictProlog` is set.
+
+Errors: validation returns `*xsd.Errors`; branch on each `Issue.Kind`
+with `errors.As`, never on the text, which may change in any release.
+`Schema` is safe for concurrent use; the option and result types are
+plain values.
 
 ## Testing
 

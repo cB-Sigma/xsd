@@ -89,7 +89,8 @@ type Issue struct {
 	Attr, Value, Why string
 }
 
-// String names the value.
+// String formats the issue as "line N: path: message", leaving out the
+// parts that are not set.
 func (i Issue) String() string {
 	var b strings.Builder
 	if i.Line > 0 {
@@ -118,7 +119,7 @@ const (
 // Error describes the failure.
 func (e *Errors) Error() string {
 	if e == nil || len(*e) == 0 {
-		return "no schema errors"
+		return "xsd: no schema errors"
 	}
 	parts := make([]string, 0, errorShown+1)
 	for i, is := range *e {
@@ -128,7 +129,7 @@ func (e *Errors) Error() string {
 		}
 		parts = append(parts, is.String())
 	}
-	return "schema validation: " + strings.Join(parts, "; ")
+	return "xsd: schema validation: " + strings.Join(parts, "; ")
 }
 
 // Schema is a loaded, resolved schema set. It is safe for concurrent use.
@@ -407,7 +408,17 @@ func LoadFiles(fsys fs.FS, roots ...string) (*Schema, error) {
 // LoadWith reads one schema from root documents inside fsys like
 // LoadFiles, with options (LoadOptions).
 func LoadWith(fsys fs.FS, opt LoadOptions, roots ...string) (*Schema, error) {
-	return loadWith(fsys, opt, nil, roots)
+	s, err := loadWith(fsys, opt, nil, roots)
+	return s, prefixed(err)
+}
+
+// prefixed gives an error returned by an exported function the package
+// prefix, keeping the error itself reachable through errors.Is and As.
+func prefixed(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("xsd: %w", err)
 }
 
 // loadWith is LoadWith; the roots named in urls are URLs, fetched first.
@@ -478,7 +489,7 @@ func loadWith(fsys fs.FS, opt LoadOptions, urls []string, roots []string) (*Sche
 func LoadZip(b []byte, root string) (*Schema, error) {
 	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
 	if err != nil {
-		return nil, fmt.Errorf("schema archive: %w", err)
+		return nil, fmt.Errorf("xsd: schema archive: %w", err)
 	}
 	var found []string
 	for _, f := range zr.File {
@@ -491,10 +502,10 @@ func LoadZip(b []byte, root string) (*Schema, error) {
 	}
 	switch len(found) {
 	case 0:
-		return nil, fmt.Errorf("schema archive has no %s", path.Base(root))
+		return nil, fmt.Errorf("xsd: schema archive has no %s", path.Base(root))
 	case 1:
 	default:
-		return nil, fmt.Errorf("schema archive has %d files named %s: %s", len(found), path.Base(root), strings.Join(found, ", "))
+		return nil, fmt.Errorf("xsd: schema archive has %d files named %s: %s", len(found), path.Base(root), strings.Join(found, ", "))
 	}
 	return Load(zr, found[0])
 }
@@ -1166,13 +1177,6 @@ func (l *loader) facets(t *xtype, kids []*node) error {
 	}
 	t.facets = f
 	return l.facetRules(t, f, byFacet)
-}
-
-func orWord(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // occursCap stands for occurrence bounds too large to count: no document

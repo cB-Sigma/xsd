@@ -482,6 +482,7 @@ func short(msg string) string {
 	if i := strings.Index(msg, "; "); i > 0 {
 		msg = msg[:i]
 	}
+	msg = strings.TrimPrefix(msg, "xsd: ")
 	msg = strings.TrimPrefix(msg, "schema validation: ")
 	f := strings.Fields(msg)
 	var keep []string

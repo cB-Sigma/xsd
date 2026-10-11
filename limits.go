@@ -98,7 +98,7 @@ func (s *Schema) ValidateDoc(doc []byte, opt DocOptions) (Errors, error) {
 		if le, ok := err.(*limitError); ok {
 			return nil, &Errors{{Line: le.line, Msg: "document refused: " + le.msg, Kind: IssueLimit}}
 		}
-		return nil, &Errors{{Msg: "not well-formed XML: " + err.Error()}}
+		return nil, &Errors{{Msg: "not well-formed XML: " + err.Error(), Kind: IssueMalformed}}
 	}
 	r := &run{s: s, ids: map[string]int{}}
 	r.validate(root)

@@ -27,8 +27,6 @@ type s4sKind struct {
 	child func(local string) string
 }
 
-func (k s4sKind) allows(a string) bool { _, ok := k.attrs[a]; return ok }
-
 // Attribute value checks, after XML Schema's white space collapsing.
 var (
 	s4sAny    = func(string) bool { return true }

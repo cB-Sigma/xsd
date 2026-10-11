@@ -1111,15 +1111,6 @@ func maxOccurs(p *particle, q qname) int {
 	return n * p.max
 }
 
-func addInt(xs []int, x int) []int {
-	for _, y := range xs {
-		if y == x {
-			return xs
-		}
-	}
-	return append(xs, x)
-}
-
 func containsInt(xs []int, x int) bool {
 	for _, y := range xs {
 		if y == x {

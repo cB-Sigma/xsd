@@ -27,6 +27,12 @@ type Hint struct {
 // document order without repeats. The document is read within the default
 // limits.
 func Hints(doc []byte) ([]Hint, error) {
+	h, err := hints(doc)
+	return h, prefixed(err)
+}
+
+// hints is Hints without the package prefix on its errors.
+func hints(doc []byte) ([]Hint, error) {
 	d := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(asXML10(doc), []byte("\uFEFF"))))
 	d.Strict = true
 	d.CharsetReader = charsetReader
@@ -115,7 +121,13 @@ type HintOptions struct {
 // Locations are read from fsys, or through o.Fetch for URLs (never by the
 // loader itself), within o.MaxFetches.
 func LoadHinted(fsys fs.FS, o HintOptions, doc []byte, roots ...string) (*Schema, error) {
-	hints, err := Hints(doc)
+	s, err := loadHinted(fsys, o, doc, roots)
+	return s, prefixed(err)
+}
+
+// loadHinted is LoadHinted without the package prefix on its errors.
+func loadHinted(fsys fs.FS, o HintOptions, doc []byte, roots []string) (*Schema, error) {
+	hints, err := hints(doc)
 	if err != nil {
 		return nil, err
 	}

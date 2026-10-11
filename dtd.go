@@ -317,11 +317,11 @@ func entityBudget(body []byte, ents map[string]string, bad map[string]string, ma
 		if j < 0 || j > 256 {
 			continue
 		}
-		name := string(body[:j])
-		if why, ok := bad[name]; ok {
+		name := body[:j]
+		if why, ok := bad[string(name)]; ok {
 			return fmt.Errorf("%s", why)
 		}
-		if v, ok := ents[name]; ok {
+		if v, ok := ents[string(name)]; ok {
 			total += len(v)
 			if maxBytes > 0 && total > maxBytes {
 				return &limitError{msg: fmt.Sprintf("entity references expand to more than %d bytes (the limit)", maxBytes)}

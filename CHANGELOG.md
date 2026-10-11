@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.0.0 (2026-10-12)
+
+From v1.0.0 the exported API does not change in a way that breaks a
+caller; additions come in minor releases.
+
+### Breaking
+
+None. Code that compiles against v0.3.0 compiles against v1.0.0. Two
+behaviour changes are listed under "Changed".
+
+### Added
+
+- `IssueMalformed`: the kind of the single issue a document that is not
+  well-formed XML gets.
+- `IssueKind.String`.
+
+### Changed
+
+- A document that is not well-formed XML is reported with kind
+  `IssueMalformed` instead of `IssueOther`. Migration: a caller that
+  treated `IssueOther` as "not well-formed" tests for `IssueMalformed`.
+- Error texts start with `xsd: ` (load errors, `Hints`, and the text of
+  `*Errors`). Error text is not API; a caller that compared it should use
+  `errors.As` with `*xsd.Errors` and `Issue.Kind`.
+
+### Removed
+
+- Unused internal code (no exported identifier changed).
+
 ## v0.3.0 (2026-10-11)
 
 Schema location hints and DTD entities, both opt-in; on the W3C XML
